@@ -232,9 +232,10 @@ const CODE_ERR = "An access code is needed. Enter it, then click the button agai
 async function callAgent(key, task){
   let res, data=null;
   try{
-    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task, skip:skipList() }) });
+    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task, skip:skipList() }), signal:abortCtl&&abortCtl.signal });
   }catch(e){ throw new Error("Could not reach the server. Check your connection and try again."); }
   try{ data = await res.json(); }catch(e){}
+  if(aborted()) throw new Error("Stopped.");
   if(res.status===401){ askCode(data&&data.message); throw new Error(CODE_ERR); }
   logModelNotes(data&&data.notes);
   if(!res.ok || !data){
@@ -247,11 +248,20 @@ async function callAgent(key, task){
   if(data.model) log("🤖", AGENTS[key].name+" answered via "+shortModel(data.model));
   return { text, truncated:!!data.truncated, json:parseJSON(text) };
 }
+/* Stop: aborts the running agent's request. Whatever it throws afterwards counts as "stopped by
+   you", not as an error; partial Builder/Polisher files stay in the draft (Continue card). */
+let abortCtl = null;
+const aborted = () => !!(abortCtl && abortCtl.signal.aborted);
+function stopAgent(){ if(abortCtl && !abortCtl.signal.aborted){ abortCtl.abort(); } }
 async function run(label, fn, onFail){
   if(ui.busy) return;
-  ui.busy=label; ui.error=null; ui.progress=null; render();
-  try{ await fn(); }catch(e){ ui.error=(e&&e.message)||"Something went wrong. Please try again."; log("⚠", label+" failed"); if(onFail) onFail(); }
-  ui.busy=null; render();
+  ui.busy=label; ui.error=null; ui.progress=null; abortCtl=new AbortController(); render();
+  try{ await fn(); }catch(e){
+    if(aborted()) log("⏹", label+" stopped by you");
+    else{ ui.error=(e&&e.message)||"Something went wrong. Please try again."; log("⚠", label+" failed"); }
+    if(onFail) onFail();
+  }
+  abortCtl=null; ui.busy=null; ui.progress=null; render();
 }
 const filesText = fs => fs.map(f=>`=== ${f.path} ===\n${f.content}`).join("\n\n");
 const cleanFiles = a => arr(a).filter(f=>f&&typeof f.path==="string"&&f.path&&typeof f.content==="string").map(f=>({path:f.path.trim().replace(/^(\.?\/)+/,""),content:f.content}));
@@ -314,7 +324,7 @@ const openFile = t => { const all=[...String(t).matchAll(/^=== FILE: (.+?) ===/g
 
 async function streamAgent(key, task, startModel, onText){
   let res;
-  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:apiHeaders(),body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null,skip:skipList()})}); }
+  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:apiHeaders(),body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null,skip:skipList()}),signal:abortCtl&&abortCtl.signal}); }
   catch(e){ return {text:"",end:"network",err:{message:"Could not reach the server. Check your connection and try again."}}; }
   if(!res.ok||!res.body){ let d=null; try{ d=await res.json(); }catch(e){} if(res.status===401){ askCode(d&&d.message); return {text:"",end:"error",err:{message:CODE_ERR}}; } return {text:"",end:"error",err:{message:(d&&d.message)||"Server error (HTTP "+res.status+")."}}; }
   const reader=res.body.getReader(), dec=new TextDecoder(); let buf="", text="", model=null, end=null, err=null;
@@ -360,6 +370,7 @@ async function runFileAgent(key, baseTask, changedOnly){
     parseFileBlocks(r.text).forEach(add);
     summary=summary||section(r.text,"SUMMARY"); notes.push(...bullets(section(r.text,"NOTES"))); improvements.push(...bullets(section(r.text,"IMPROVEMENTS")));
     keep(); save();
+    if(aborted()) throw new Error("Stopped.");   // finished files stay in the draft
     if(r.err&&!r.text) throw new Error((r.err.message||"Gemini error.")+(order.length?" "+order.length+" finished files were kept; you can continue.":""));
     const finished=/^=== DONE ===\s*$/m.test(r.text) || (r.end==="stop" && !openFile(r.text));
     if(finished) break;
@@ -468,7 +479,7 @@ const busyBox=()=>{
   if(!ui.busy) return "";
   const p=ui.progress;
   const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
-  return `<div class="card"><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.${detail}</div>`;
+  return `<div class="card"><div class="row" style="justify-content:space-between"><span><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.</span><button class="sm" onclick="stopAgent()">⏹ Stop</button></div>${detail}</div>`;
 };
 const draftBox=()=>{   // partial work from a run that stopped (error, cut-off or page reload)
   const d=projectState.draft; if(ui.busy||!d||!d.files.length) return "";

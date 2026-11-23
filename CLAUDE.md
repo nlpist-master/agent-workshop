@@ -49,6 +49,7 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 - Server cuts itself off at `STREAM_DEADLINE` (230s). A model that sends nothing for `READ_TIMEOUT` (90s) counts as hung.
 - Browser (`runFileAgent`) keeps every closed file block; if cut off, a continuation call sends the files already written and prefers the same model (`start_model`). Up to 5 rounds.
 - Partial work: finished files are also kept in `projectState.draft` (`{agent, findings, files, summary, notes, improvements, model}`), saved with the project while streaming. Project files change only on success, which clears the draft. After a failure or page reload a card offers `Continue` (resumes via continuation) or `Discard`.
+- Stop: `run()` creates an `AbortController` (`abortCtl`); both fetches pass its signal, and the busy box has `⏹ Stop`. Anything thrown after an abort is logged as "stopped by you" (no red error); partial files stay in the draft. Stop saves time, not quota (the request was already counted), and a one-shot call keeps running on the server until Gemini answers.
 - Testing without quota: mock `window.fetch` for `/api/agent/stream` in the console (return a `ReadableStream` of NDJSON events) and use the `agent-workshop-code` launch config.
 
 ## Local development (Windows)
