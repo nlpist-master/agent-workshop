@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agent Workshop</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2128;--mut:#6b7280;--bd:#e1e4e8;--ac:#2f5fd0;--acbg:#e8eefc;--ok:#1a7f4b;--warn:#b7791f;--crit:#c0392b;--code:#f0f2f5;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171c;--card:#1c2027;--fg:#e6e8eb;--mut:#9aa3af;--bd:#2d333b;--ac:#6d93f0;--acbg:#232c45;--ok:#4cc38a;--warn:#e0a84a;--crit:#ef7a6c;--code:#12151a}}
+:root[data-theme="dark"]{--bg:#14171c;--card:#1c2027;--fg:#e6e8eb;--mut:#9aa3af;--bd:#2d333b;--ac:#6d93f0;--acbg:#232c45;--ok:#4cc38a;--warn:#e0a84a;--crit:#ef7a6c;--code:#12151a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+h1{margin:0;font-size:22px}.sub{color:var(--mut);font-size:14px}
+h2{font-size:16px;margin:0 0 8px}h3{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:14px 0 4px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.steps{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 16px}
+.step{padding:5px 12px;border:1px solid var(--bd);border-radius:999px;font-size:13px;color:var(--mut);background:var(--card)}
+.step.done{color:var(--ok)}.step.cur{background:var(--acbg);color:var(--ac);border-color:var(--ac);font-weight:600}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
+button{font:inherit;cursor:pointer;border:1px solid var(--bd);background:var(--card);color:var(--fg);padding:7px 13px;border-radius:7px}
+button:hover{border-color:var(--ac)}button.pri{background:var(--ac);border-color:var(--ac);color:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}button.sm{padding:3px 9px;font-size:13px}
+textarea{width:100%;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:10px;resize:vertical}
+a.lnk{color:var(--ac);cursor:pointer;font-size:13px}
+.badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--bd);color:var(--mut)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}.badge.crit{color:var(--crit);border-color:var(--crit)}.badge.warn{color:var(--warn);border-color:var(--warn)}.badge.sug{color:var(--ac);border-color:var(--ac)}
+ul{margin:4px 0;padding-left:20px}li{margin:2px 0}
+.err{background:color-mix(in srgb,var(--crit) 12%,transparent);border:1px solid var(--crit);color:var(--crit);padding:10px;border-radius:8px;margin-bottom:12px}
+.note{background:var(--acbg);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--mut);margin:8px 0}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--bd);border-top-color:var(--ac);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes s{to{transform:rotate(360deg)}}
+.files{display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px}@media(max-width:700px){.files{grid-template-columns:1fr}}
+.tree div{padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;font-family:ui-monospace,Menlo,monospace;word-break:break-all}.tree div.sel,.tree div:hover{background:var(--acbg)}
+pre{margin:0;background:var(--code);border:1px solid var(--bd);border-radius:8px;padding:10px;overflow:auto;max-height:420px;font:12.5px/1.45 ui-monospace,Menlo,monospace;white-space:pre}
+.log{font-size:13px;max-height:70vh;overflow:auto}.log div{padding:3px 0;border-bottom:1px dashed var(--bd)}.log time{color:var(--mut);margin-right:6px}
+.issue{border-left:3px solid var(--bd);padding:4px 10px;margin:8px 0}.issue.critical{border-color:var(--crit)}.issue.warning{border-color:var(--warn)}.issue.suggestion{border-color:var(--ac)}
+.msg{padding:6px 10px;border-radius:8px;margin:6px 0;background:var(--bg);font-size:14px}.msg.u{background:var(--acbg)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+.modal>div{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px;max-width:720px;width:100%;max-height:85vh;overflow:auto}
+.li{display:flex;gap:8px;margin:3px 0}.mdh{text-transform:none;letter-spacing:0;color:var(--fg);font-size:15px;margin:16px 0 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>Agent Workshop</h1><div class="sub">Build software through specialized AI agents</div><div style="margin-top:4px"><b id="cur"></b> <span class="sub" id="saved"></span></div></div>
+  <div class="row"><button onclick="showLibrary()">📚 Library</button><button onclick="newProject()">＋ New Project</button><button onclick="showConfig()">⚙ Agent Configuration</button></div>
+</header>
+<div id="steps" class="steps"></div>
+<div class="grid">
+  <main id="main"></main>
+  <aside><div class="card"><h2>Agent Activity</h2><div id="log" class="log"></div></div></aside>
+</div>
+</div>
+<div id="modal"></div>
+
+<script>
+/* ============ AGENT DEFINITIONS (prompts kept separate from logic) ============ */
+const JSON_RULE = "Respond with ONLY one valid JSON object. No markdown fences, no text outside the JSON.";
+const AGENTS = {
+  planner: { name:"Planner", icon:"🧠", desc:"Turns an idea into a reviewable plan.",
+    role:"Understands the idea, finds ambiguities, proposes architecture, user flows, file structure and steps. Never implements.",
+    prompt:"You are the Planner agent in a software workflow. Write for a human reader, in the same language the user wrote their idea in (for example Hebrew). Produce a detailed, readable plan in Markdown: first line '# <project name>', then sections with '##' headings and bullet lists covering: Overview, Goals, Functional requirements, User flow, Data / state, Architecture, Proposed files, Implementation steps, Open questions, Assumptions. Be concrete and specific. No JSON, no code fences. Do NOT write the implementation. When the user later sends a message: if it changes the plan, begin your reply with the line [PLAN UPDATED] followed by the COMPLETE updated plan; if it is only a question, begin with [ANSWER] and answer briefly in plain text, without repeating the whole plan." },
+  builder: { name:"Builder", icon:"💻", desc:"Implements the approved plan.",
+    role:"Produces project files that follow the approved plan. Output is in-memory file objects only.",
+    prompt:"You are the Builder agent. Implement the approved plan as a small, working project, staying aligned with it. Pick languages appropriate to the idea (default: plain HTML/CSS/JS). Keep files compact. If given test findings, fix them and return the full updated file set. " + JSON_RULE + ' Schema: {"summary":"","files":[{"path":"","content":""}],"notes":[]}' },
+  tester: { name:"Tester", icon:"🧪", desc:"AI code review of the generated files.",
+    role:"Reviews requirements coverage, bugs, missing features, UX issues and plan/implementation mismatches. Does not rewrite the project and does not execute code.",
+    prompt:"You are the Tester agent. You perform a static AI code review; you do NOT run code. Inspect requirements coverage, functional problems, missing features, obvious bugs, UX problems and inconsistencies with the plan. Do not rewrite the project. " + JSON_RULE + ' Schema: {"status":"pass|issues","summary":"","issues":[{"severity":"critical|warning|suggestion","title":"","description":"","recommendation":""}]}' },
+  polisher: { name:"Polisher", icon:"✨", desc:"UI/UX and presentation improvements.",
+    role:"Improves visual hierarchy, spacing, typography, consistency, responsiveness, empty/error states and usability without changing core functionality.",
+    prompt:"You are the Polisher agent. Focus on UI/UX and presentation: hierarchy, spacing, typography, consistency, responsiveness, empty and error states, button hierarchy, usability. Never change core functional requirements. Only include files you actually changed, with full content. " + JSON_RULE + ' Schema: {"summary":"","improvements":[""],"files":[{"path":"","content":""}]}' }
+};
+const STAGES = ["idea","plan","build","test","polish"];
+
+/* ============ STATE ============ */
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const fresh = () => ({ id:uid(), name:"", created:Date.now(), updated:Date.now(), changes:{}, idea:"", plan:null, planVersions:[], approvedVersion:null, plannerConversation:[], files:[], buildResult:null, testResults:null, polishResults:null, activityLog:[], status:"idea" });
+let projectState = fresh();
+let ui = { busy:null, error:null, sel:null, draft:"", chat:"", showPrev:false };
+let DL = false;   // downloads capability available?
+
+/* Minimal Markdown renderer for the Planner's free-text plan (headings, bullets, **bold**, `code`) */
+function md(t){
+  const inl=x=>esc(x).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/`([^`]+)`/g,"<code>$1</code>");
+  return String(t).split("\n").map(l=>{
+    let m;
+    if(!l.trim()||/^\s*```/.test(l)) return "";
+    if(m=l.match(/^\s*#{1,4}\s+(.*)/)) return `<h3 class="mdh" dir="auto">${inl(m[1].replace(/\*+/g,""))}</h3>`;
+    if(m=l.match(/^(\s*)([-*•]|\d+[.)])\s+(.*)/)) return `<div class="li" dir="auto" style="margin-inline-start:${Math.min(m[1].length,8)*8}px"><span>${/\d/.test(m[2])?m[2]:"•"}</span><div>${inl(m[3])}</div></div>`;
+    return `<p dir="auto" style="margin:6px 0">${inl(l)}</p>`;
+  }).join("");
+}
+
+/* ============ PERSISTENCE (localStorage: one blob {current, projects}) ============ */
+const KEY = "agentWorkshop:v1";
+let lastSig = "";
+const sigOf = () => JSON.stringify({...projectState, updated:0});
+const nameOf = p => { const pl=((p.planVersions||[]).at(-1)||{}).plan; const h=pl&&pl.text&&(pl.text.match(/^#\s+(.+)$/m)||[])[1]; return (pl&&pl.projectName)||(h&&h.replace(/[*`]/g,"").trim().slice(0,60))||(p.idea||"").slice(0,40); };
+function readStore(){ try{ const x=JSON.parse(localStorage.getItem(KEY)); if(x&&typeof x==="object"&&x.projects&&typeof x.projects==="object") return x; }catch(e){} return {current:null,projects:{}}; }
+function writeStore(x){ localStorage.setItem(KEY, JSON.stringify(x)); }
+function writeCurrent(id){ try{ const x=readStore(); x.current=id; writeStore(x); }catch(e){} }
+function setSaved(t){ const e=$("#saved"); if(e) e.textContent=t; }
+function save(){
+  if(!projectState.idea) return;               // empty projects are never stored
+  const sig=sigOf(); if(sig===lastSig) return;
+  try{
+    projectState.updated=Date.now(); projectState.name=nameOf(projectState);
+    const x=readStore(); x.current=projectState.id; x.projects[projectState.id]=projectState; writeStore(x);
+    lastSig=sigOf(); setSaved("✓ Saved "+new Date().toTimeString().slice(0,5));
+  }catch(e){ setSaved("⚠ Not saved (browser storage unavailable)"); }
+}
+function migrate(p){   // fill defaults so older/partial saves never crash
+  const m={...fresh(),...p};
+  ["planVersions","plannerConversation","files","activityLog"].forEach(k=>{ if(!Array.isArray(m[k])) m[k]=[]; });
+  m.planVersions=m.planVersions.filter(v=>v&&v.plan); m.files=cleanFiles(m.files);
+  if(!m.changes||typeof m.changes!=="object") m.changes={};
+  if(m.testResults) m.testResults.issues=arr(m.testResults.issues);
+  if(m.polishResults){ m.polishResults.files=cleanFiles(m.polishResults.files); m.polishResults.improvements=arr(m.polishResults.improvements); }
+  if(!STAGES.includes(m.status)||(!m.planVersions.length&&m.status!=="idea")) m.status="idea";
+  return m;
+}
+function resetUi(){ ui={busy:null,error:null,sel:projectState.files[0]?projectState.files[0].path:null,draft:projectState.idea||"",chat:"",showPrev:false}; }
+function loadCurrent(){ const x=readStore(), p=x.projects[x.current]; if(p){ try{ projectState=migrate(p); }catch(e){ projectState=fresh(); } } resetUi(); lastSig=sigOf(); }
+const guardBusy = () => { if(ui.busy){ ui.error="Wait for the running agent to finish before switching projects."; render(); return true; } return false; };
+function openProject(id){
+  if(guardBusy()) return; save();
+  const p=readStore().projects[id]; if(!p){ closeModal(); ui.error="That project could not be loaded."; return render(); }
+  projectState=migrate(p); writeCurrent(id); resetUi(); lastSig=sigOf(); closeModal(); render();
+}
+const rel = t => { const m=Math.round((Date.now()-t)/60000); return m<1?"just now":m<60?m+" min ago":m<1440?Math.round(m/60)+" h ago":new Date(t).toLocaleDateString(); };
+function showLibrary(){
+  save(); const ps=Object.values(readStore().projects).sort((a,b)=>b.updated-a.updated);
+  modal("📚 Project Library", ps.length ? ps.map(p=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--bd)"><div><b>${esc(p.name||"Untitled")}</b><div class="sub">Last updated: ${rel(p.updated)} · <span class="badge">${esc(String(p.status).toUpperCase())}</span></div></div>${p.id===projectState.id?`<span class="badge ok">Current</span>`:`<button class="sm pri" data-id="${esc(p.id)}" onclick="openProject(this.dataset.id)">Continue</button>`}</div>`).join("") : `<p class="sub">No saved projects yet. A project is saved automatically once you create a plan.</p>`);
+}
+
+/* ============ FILES: single source of truth is projectState.files ============ */
+function setFiles(nf, src, replace){
+  const old=projectState.files, ch={};
+  if(old.length) nf.forEach(f=>{ const o=old.find(x=>x.path===f.path); if(!o) ch[f.path]={type:"new",src}; else if(o.content!==f.content) ch[f.path]={type:"updated",src,before:o.content}; });
+  projectState.files = replace ? nf : [...old.map(o=>nf.find(f=>f.path===o.path)||o), ...nf.filter(f=>!old.some(o=>o.path===f.path))];
+  projectState.changes=ch;
+}
+
+/* ============ DOWNLOADS (native `downloads` capability; ZIP built client-side, no library) ============ */
+const DL_OK=/\.(gif|png|jpe?g|webp|mp4|webm|txt|json|md|docx|pptx|epub|csv|ttf|html|svg|pdf|xlsx|zip)$/i;
+const CRC=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return b=>{let c=~0;for(const x of b)c=t[(c^x)&255]^(c>>>8);return ~c>>>0;};})();
+function makeZip(files){
+  const enc=new TextEncoder(), parts=[], cd=[]; let off=0;
+  const u16=n=>[n&255,(n>>8)&255], u32=n=>[n&255,(n>>8)&255,(n>>16)&255,(n>>>24)&255];
+  for(const f of files){
+    const nm=enc.encode(f.path), d=enc.encode(f.content), c=CRC(d), mid=[0,8,0,0,0,0,33,0,...u32(c),...u32(d.length),...u32(d.length),...u16(nm.length),0,0];
+    parts.push(new Uint8Array([0x50,0x4b,3,4,20,0,...mid]),nm,d);
+    cd.push(new Uint8Array([0x50,0x4b,1,2,20,0,20,0,0,8,0,0,0,0,33,0,...u32(c),...u32(d.length),...u32(d.length),...u16(nm.length),0,0,0,0,0,0,0,0,0,0,0,0,...u32(off)]),nm);
+    off+=30+nm.length+d.length;
+  }
+  const cdSize=cd.reduce((a,x)=>a+x.length,0);
+  return new Blob([...parts,...cd,new Uint8Array([0x50,0x4b,5,6,0,0,0,0,...u16(files.length),...u16(files.length),...u32(cdSize),...u32(off),0,0])],{type:"application/zip"});
+}
+async function saveOut(name,data){
+  try{ const d=await claude.use("downloads"); if(!d) throw {code:"unavailable"}; await d.save({filename:name,data}); }
+  catch(e){ if(!e||e.code!=="declined"){ ui.error="Download failed ("+((e&&e.code)||"error")+")."; render(); } }
+}
+function dlFile(i){ const f=projectState.files[i]; if(!f) return; const n=f.path.split("/").pop(); saveOut(DL_OK.test(n)?n:n+".txt", f.content||"\n"); }
+function dlZip(){ if(!projectState.files.length) return; saveOut((nameOf(projectState).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"project")+".zip", makeZip(projectState.files)); }
+
+/* ============ HELPERS ============ */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = x => typeof x === "string" ? x : (x && typeof x === "object" ? Object.values(x).filter(v=>typeof v!=="object").join(" — ") : String(x));
+const arr = x => Array.isArray(x) ? x : (x ? [x] : []);
+function log(icon, msg){ const d=new Date(); projectState.activityLog.push({t:d.toTimeString().slice(0,5), icon, msg}); }
+function parseJSON(t){
+  try{ return JSON.parse(t); }catch(e){}
+  const m=String(t).replace(/```(?:json)?/g,""), i=m.indexOf("{"), j=m.lastIndexOf("}");
+  if(i>=0&&j>i){ try{ return JSON.parse(m.slice(i,j+1)); }catch(e){} }
+  return null;
+}
+
+/* ============ API LAYER (only place that talks to Claude) ============ */
+async function callAgent(key, task){
+  const sample = await claude.use("sample");
+  if(!sample) throw new Error("Claude is not available in this view. Open the published page while signed in and allow the request.");
+  const r = await sample(AGENTS[key].prompt + "\n\n" + task, { cache:false, modelTier: (key==="builder"||key==="polisher") ? "complex" : "default" });
+  return { text:r.text||"", truncated:!!r.truncated, json:parseJSON(r.text||"") };
+}
+async function run(label, fn, onFail){
+  if(ui.busy) return;
+  ui.busy=label; ui.error=null; render();
+  try{ await fn(); }catch(e){ ui.error=(e&&e.message)||"Something went wrong. Please try again."; log("⚠", label+" failed"); if(onFail) onFail(); }
+  ui.busy=null; render();
+}
+const filesText = fs => fs.map(f=>`=== ${f.path} ===\n${f.content}`).join("\n\n");
+const cleanFiles = a => arr(a).filter(f=>f&&typeof f.path==="string"&&f.path&&typeof f.content==="string").map(f=>({path:f.path.trim().replace(/^(\.?\/)+/,""),content:f.content}));
+const curPlan = () => (projectState.planVersions.at(-1)||{}).plan || null;
+const planStr = p => !p ? "" : p.text ? p.text : JSON.stringify(p);
+
+/* ============ AGENT ACTIONS ============ */
+function createPlan(){
+  const idea=ui.draft.trim();
+  if(!idea){ ui.error="Please describe what you want to build first."; return render(); }
+  projectState.idea=idea; log("👤","User submitted an idea");
+  run("Planner", async()=>{
+    log("🧠","Planner started");
+    const r=await callAgent("planner","User idea:\n"+idea);
+    if(!r.text.trim()) throw new Error("The Planner returned an empty response. Please click Create Plan again.");
+    addPlanVersion(r.text);
+    projectState.plannerConversation.push({role:"planner",content:"Initial plan created."});
+    projectState.status="plan"; log("🧠","Planner completed (plan v1)");
+  });
+}
+function addPlanVersion(text){ projectState.planVersions.push({v:projectState.planVersions.length+1, plan:{text:String(text).trim()}}); }
+function askPlanner(){
+  const msg=ui.chat.trim(); if(!msg){ ui.error="Type a message for the Planner first."; return render(); }
+  ui.chat=""; projectState.plannerConversation.push({role:"user",content:msg}); log("👤","User updated requirements");
+  run("Planner", async()=>{
+    log("🧠","Planner started");
+    const convo=projectState.plannerConversation.map(m=>(m.role==="user"?"User: ":"Planner: ")+m.content).join("\n");
+    const r=await callAgent("planner",`Original idea:\n${projectState.idea}\n\nCurrent plan:\n${planStr(curPlan())}\n\nConversation:\n${convo}\n\nAnswer the latest user message following the [PLAN UPDATED] / [ANSWER] rule.`);
+    const t=r.text.trim();
+    if(!t) throw new Error("The Planner returned an empty response. Your message was kept; please send it again.");
+    const m=t.match(/^\s*\[(PLAN UPDATED|ANSWER)\]\s*/i), body=m?t.slice(m[0].length):t;
+    if(m&&m[1].toUpperCase()==="ANSWER"){ projectState.plannerConversation.push({role:"planner",content:body}); log("🧠","Planner answered (no plan change)"); }
+    else{ addPlanVersion(body); projectState.plannerConversation.push({role:"planner",content:"Plan updated (v"+projectState.planVersions.length+")."}); log("🧠","Planner updated plan (v"+projectState.planVersions.length+")"); }
+  }, ()=>{ projectState.plannerConversation.pop(); ui.chat=msg; });
+}
+function approve(){
+  if(!projectState.planVersions.length) return;
+  const pv=projectState.planVersions.at(-1);
+  if(pv.plan._raw){ ui.error="The current plan could not be parsed into structured form. Ask the Planner to restate it before approving."; return render(); }
+  projectState.approvedVersion=pv.v; projectState.plan=pv.plan; log("✓","Plan v"+pv.v+" approved");
+  build(null);
+}
+function build(findings){
+  if(projectState.approvedVersion==null) return;
+  run("Builder", async()=>{
+    log("💻","Builder started"+(findings?" (applying test findings)":""));
+    let task=`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nPlanner conversation:\n${projectState.plannerConversation.map(m=>m.role+": "+m.content).join("\n")}`;
+    if(findings) task+=`\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings to address:\n${JSON.stringify(findings)}`;
+    const r=await callAgent("builder",task);
+    const files=cleanFiles(r.json&&r.json.files);
+    if(!files.length) throw new Error("Builder returned no usable files"+(r.truncated?" (response was cut off)":"")+". Nothing was changed; try again.");
+    setFiles(files,"Builder",true); projectState.buildResult={summary:r.json.summary||"",notes:arr(r.json.notes)};
+    ui.sel=files.some(f=>f.path===ui.sel)?ui.sel:files[0].path; ui.showPrev=false;
+    if(findings && projectState.testResults) projectState.testResults.stale=true;
+    projectState.status="build"; log("💻","Builder created "+files.length+" files (in memory only)");
+  });
+}
+function testProject(){
+  if(!projectState.files.length) return;
+  run("Tester", async()=>{
+    log("🧪","Tester started");
+    const r=await callAgent("tester",`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nGenerated files:\n${filesText(projectState.files)}`);
+    const j=r.json;
+    projectState.testResults = j && Array.isArray(j.issues) ? {status:j.status,summary:j.summary||"",issues:j.issues.filter(i=>i&&i.title)} : {status:"issues",summary:r.text.slice(0,1500),issues:[],raw:true};
+    projectState.status="test"; log("🧪","Tester found "+projectState.testResults.issues.length+" issues (AI review, no code executed)");
+  });
+}
+function sendBack(){
+  const t=projectState.testResults; if(!t||!t.issues.length) return;
+  log("👤","User sent findings back to Builder"); build(t.issues);
+}
+function runPolish(){
+  run("Polisher", async()=>{
+    log("✨","Polisher started");
+    const t=projectState.testResults;
+    const r=await callAgent("polisher",`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings:\n${t?JSON.stringify(t.issues):"none"}`);
+    const j=r.json||{};
+    projectState.polishResults={summary:j.summary||(r.json?"":r.text.slice(0,1500)),improvements:arr(j.improvements),files:cleanFiles(j.files),applied:false};
+    projectState.status="polish"; log("✨","Polisher proposed "+projectState.polishResults.files.length+" file changes");
+  });
+}
+function applyPolish(){
+  const p=projectState.polishResults; if(!p||!p.files.length) return;
+  modal("Apply polish?",`<p>This replaces ${p.files.length} file(s) in memory: <b>${p.files.map(f=>esc(f.path)).join(", ")}</b>. Review the proposed changes first; the Polisher is not supposed to change functionality.</p>`,"Apply",()=>{
+    setFiles(p.files,"Polish",false); ui.showPrev=false;
+    p.applied=true; log("✨","Polish applied to "+p.files.length+" files"); render();
+  });
+}
+
+/* ============ MODALS ============ */
+function modal(title,body,okLabel,okFn){
+  $("#modal").innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div><h2>${esc(title)}</h2>${body}<div class="row" style="margin-top:12px;justify-content:flex-end">${okLabel?`<button class="pri" id="mok">${esc(okLabel)}</button>`:""}<button onclick="closeModal()">${okLabel?"Cancel":"Close"}</button></div></div></div>`;
+  if(okLabel) $("#mok").onclick=()=>{ closeModal(); okFn(); };
+}
+function closeModal(){ $("#modal").innerHTML=""; }
+function newProject(){   // current project stays saved in the library
+  if(guardBusy()) return;
+  if(!projectState.idea){ ui.error=null; return render(); }   // already empty: nothing to do
+  save(); projectState=fresh(); writeCurrent(projectState.id); resetUi(); lastSig=sigOf(); render();
+}
+function showConfig(){
+  modal("Agent Configuration", Object.values(AGENTS).map(a=>`<h3>${a.icon} ${esc(a.name)}</h3><p>${esc(a.role)}</p><pre style="white-space:pre-wrap">${esc(a.prompt)}</pre>`).join("")+`<div class="note">Read-only in this MVP.</div>`);
+}
+function showContext(key){
+  const s=projectState, ok=!!s.approvedVersion;
+  const sets={
+    planner:[["Original idea",!!s.idea],["Earlier plan versions",s.planVersions.length>0],["Planner conversation",s.plannerConversation.length>0],["Generated files",false],["Test results",false]],
+    builder:[["Original idea",ok],["Approved plan",ok],["Planner conversation",ok],["Current files (on rebuild)",s.files.length>0],["Test findings (on rebuild)",!!s.testResults],["Polish results",false]],
+    tester:[["Original idea",ok],["Approved plan",ok],["Generated files",s.files.length>0],["Planner context",ok],["Polish results",false]],
+    polisher:[["Original idea",ok],["Approved plan",ok],["Current files",s.files.length>0],["Test findings",!!s.testResults]]
+  };
+  modal(AGENTS[key].name.toUpperCase()+" CONTEXT",`<ul style="list-style:none;padding:0">${sets[key].map(([n,v])=>`<li>${v?"✓":"✗"} ${esc(n)}</li>`).join("")}</ul><div class="note">Shows what the agent would receive if run now.</div>`);
+}
+
+/* ============ RENDERING ============ */
+const sect=(t,a)=>arr(a).length?`<h3>${t}</h3><ul>${arr(a).map(x=>`<li>${esc(fmt(x))}</li>`).join("")}</ul>`:"";
+function renderPlan(p){
+  if(p.text||p._raw) return md(p.text||p._raw);
+  return `<h2>${esc(p.projectName||"Project")}</h2><p>${esc(p.summary)}</p>`+sect("Goals",p.goals)+sect("Functional requirements",p.requirements)+sect("User flow",p.userFlow)+sect("Data / state",p.dataAndState)+sect("Architecture",p.architecture)+sect("Proposed files",p.files)+sect("Implementation steps",p.implementationSteps)+sect("Open questions",p.openQuestions)+sect("Assumptions",p.assumptions);
+}
+const busyBox=()=>ui.busy?`<div class="card"><span class="spin"></span>${esc(ui.busy)} is working… this can take up to a minute.</div>`:"";
+const ctxBtn=k=>`<button class="sm" onclick="showContext('${k}')">🔍 Context</button>`;
+function agentHead(k,extra){ const a=AGENTS[k]; return `<div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">${a.icon} ${a.name}</h2><div class="row">${extra||""}${ctxBtn(k)}</div></div><div class="sub" style="margin-bottom:8px">${esc(a.desc)}</div>`; }
+
+function render(){
+  save();
+  const s=projectState, i=STAGES.indexOf(s.status);
+  $("#steps").innerHTML=STAGES.map((n,k)=>`<span class="step ${k<i?"done":""} ${k===i?"cur":""}">${k<i?"✓ ":""}${n.toUpperCase()}</span>`).join("");
+  const dis=ui.busy?"disabled":"";
+  const ch=s.changes||{}, nch=Object.keys(ch).length, chSrc=nch?Object.values(ch)[0].src:"";
+  $("#cur").textContent="Current Project: "+(nameOf(s)||"New project");
+  let h="";
+  if(ui.error) h+=`<div class="err">⚠ ${esc(ui.error)}</div>`;
+
+  if(s.status==="idea"){
+    h+=`<div class="card"><h2>What do you want to build?</h2><textarea id="idea" dir="auto" rows="6" placeholder="I want to build an NLP simulator for students. It should simulate conversations with different client profiles, allow the student to practice questioning techniques, and provide feedback at the end." oninput="ui.draft=this.value">${esc(ui.draft)}</textarea>
+    <div class="row" style="margin-top:10px"><button class="pri" ${dis} onclick="createPlan()">🧠 Create Plan</button><a class="lnk" onclick="useExample()">Try an example</a></div>
+    <div class="note">Nothing starts automatically. You approve every stage.</div></div>`;
+  } else {
+    h+=`<div class="card">${agentHead("planner",s.planVersions.map(v=>`<span class="badge ${v.v===s.approvedVersion?"ok":""}">PLAN v${v.v}${v.v===s.approvedVersion?" ✓ APPROVED":""}</span>`).join(""))}
+    <details ${s.status==="plan"?"open":""}><summary>Latest plan (v${s.planVersions.length})</summary>${renderPlan(curPlan())}</details>`;
+    if(s.status==="plan"){
+      h+=`<h3>Planner conversation</h3>${s.plannerConversation.map(m=>`<div class="msg ${m.role==="user"?"u":""}" dir="auto"><b>${m.role==="user"?"You":"🧠 Planner"}:</b> ${esc(m.content)}</div>`).join("")}
+      <div class="row" style="margin-top:8px;flex-wrap:nowrap"><textarea rows="2" dir="auto" placeholder="Ask the Planner something about this plan..." oninput="ui.chat=this.value">${esc(ui.chat)}</textarea><button ${dis} onclick="askPlanner()">Send</button></div>
+      <div class="row" style="margin-top:12px"><button class="pri" ${dis} onclick="approve()">✓ Approve Plan &amp; Build</button></div>`;
+    }
+    h+=`</div>`;
+  }
+
+  if(s.files.length){
+    const sel=s.files.find(f=>f.path===ui.sel)||s.files[0], sc=ch[sel.path];
+    h+=`<div class="card" id="filesCard">${agentHead("builder",`<span class="badge">in memory only</span>`)}
+    ${s.buildResult?`<p>${esc(s.buildResult.summary)}</p>`:""}
+    ${nch?`<div class="note">✨ ${nch} file${nch>1?"s":""} modified by ${esc(chSrc)}</div>`:""}
+    <div class="files"><div class="tree">📁 project${s.files.map(f=>`<div class="${f.path===sel.path?"sel":""}" onclick="selFile(this.dataset.p)" data-p="${esc(f.path)}">📄 ${esc(f.path)}${ch[f.path]?` <span class="badge ok">${ch[f.path].type==="new"?"🆕 New":"✨ Updated"}</span>`:""}</div>`).join("")}</div><div>${sc&&sc.before!==undefined?`<div class="row" style="margin-bottom:6px"><span class="badge">${ui.showPrev?"Previous version":"Current version"}</span><button class="sm" onclick="ui.showPrev=!ui.showPrev;render()">${ui.showPrev?"Show current":"Compare: show previous"}</button></div>`:""}<pre>${esc(sc&&sc.before!==undefined&&ui.showPrev?sc.before:sel.content)}</pre></div></div>
+    ${s.buildResult&&s.buildResult.notes.length?sect("Notes",s.buildResult.notes):""}
+    <div class="note">Files are generated text only. Nothing was written to disk and nothing was executed.</div>
+    ${s.status==="build"?`<div class="row"><button class="pri" ${dis} onclick="testProject()">🧪 Test Project</button></div>`:""}</div>`;
+  }
+  const t=s.testResults;
+  if(t){
+    const by=sv=>t.issues.filter(x=>String(x.severity).toLowerCase()===sv);
+    const grp=sv=>by(sv).map(x=>`<div class="issue ${sv}"><span class="badge ${sv==="critical"?"crit":sv==="warning"?"warn":"sug"}">${sv.toUpperCase()}</span> <b>${esc(x.title)}</b><div>${esc(x.description)}</div>${x.recommendation?`<div class="sub">→ ${esc(x.recommendation)}</div>`:""}</div>`).join("");
+    h+=`<div class="card">${agentHead("tester",t.stale?`<span class="badge warn">stale: files rebuilt</span>`:"")}
+    <div class="note">AI code review only. No code was executed and no real tests were run.</div>
+    <h2>${t.issues.length?`⚠ Issues found: ${t.issues.length}`:"✓ No issues reported"}</h2><p>${esc(t.summary)}</p>${grp("critical")}${grp("warning")}${grp("suggestion")}
+    ${s.status==="test"?`<div class="row" style="margin-top:10px">${t.issues.length?`<button ${dis} onclick="sendBack()">↻ Send Findings Back to Builder</button>`:""}<button class="pri" ${dis} onclick="runPolish()">✨ Run Polish Agent</button></div>`:""}
+    ${s.status==="build"&&t.stale?`<div class="row"><button class="pri" ${dis} onclick="testProject()">🧪 Re-test Project</button></div>`:""}</div>`;
+  }
+  const p=s.polishResults;
+  if(p){
+    h+=`<div class="card">${agentHead("polisher",p.applied?`<span class="badge ok">applied</span>`:"")}<p>${esc(p.summary)}</p>${sect("Improvements",p.improvements)}
+    ${p.files.length?`<h3>Proposed file changes</h3><ul>${p.files.map(f=>`<li><code>${esc(f.path)}</code></li>`).join("")}</ul>`:`<div class="note">The Polisher proposed recommendations only, no file changes.</div>`}
+    ${p.files.length&&!p.applied?`<button class="pri" ${dis} onclick="applyPolish()">Apply Polish</button>`:""}</div>`;
+  }
+  if(s.files.length){
+    const odd=s.files.some(f=>!DL_OK.test(f.path));
+    h+=`<div class="card"><h2>Project Output</h2><p>${s.files.length} file${s.files.length>1?"s":""} generated${nch?` · ${nch} modified by ${esc(chSrc)}`:""}</p><div class="row" style="margin-bottom:8px"><button class="sm" onclick="document.getElementById('filesCard').scrollIntoView({behavior:'smooth'})">👁 View Files</button>${DL?`<button class="pri sm" onclick="dlZip()">⬇ Download ZIP</button>`:""}</div>${s.files.map((f,i)=>`<div class="row" style="justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--bd)"><code>${esc(f.path)}</code>${DL?`<button class="sm" onclick="dlFile(${i})">Download</button>`:""}</div>`).join("")}${DL?(odd?`<div class="note">Single files with extensions the viewer can't save directly (e.g. .js, .css, .py) get an extra .txt; the ZIP keeps the real names.</div>`:""):`<div class="note">Downloads aren't available in this view.</div>`}</div>`;
+  }
+  h+=busyBox();
+  $("#main").innerHTML=h;
+  $("#log").innerHTML=s.activityLog.length?s.activityLog.map(e=>`<div><time>${e.t}</time>${e.icon} ${esc(e.msg)}</div>`).join(""):`<div class="sub">No activity yet.</div>`;
+}
+function selFile(p){ ui.sel=p; ui.showPrev=false; render(); }
+function useExample(){ ui.draft="Build an NLP practice simulator for students. The application should present simulated client profiles, allow the student to conduct a text conversation, track the session, and provide feedback about the student's questioning techniques at the end."; render(); }
+loadCurrent(); render();
+try{ claude.use("downloads").then(d=>{ DL=!!d; render(); }).catch(()=>{}); }catch(e){}
+</script>
+</body>
+</html>
