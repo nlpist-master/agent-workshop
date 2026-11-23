@@ -15,10 +15,12 @@ except ImportError:
     pass
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+import json
+
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from _gemini_client import GeminiError, generate
+from _gemini_client import GeminiError, generate, stream_generate
 
 app = FastAPI(title="Agent Workshop")
 
@@ -53,6 +55,27 @@ def run_agent(req: AgentRequest):
         if e.retry_after:
             body["retry_after_seconds"] = e.retry_after
         return JSONResponse(body, status_code=e.status)
+
+
+class StreamRequest(BaseModel):
+    agent: str
+    prompt: str = Field(min_length=1, max_length=2_000_000)
+    start_model: str | None = None
+
+
+@app.post("/api/agent/stream")
+def run_agent_stream(req: StreamRequest):
+    """Long outputs (Builder, Polisher): NDJSON event stream, cut off by the server in time."""
+    if req.agent not in AGENTS:
+        return JSONResponse({"error": "bad_request", "message": f"Unknown agent: {req.agent}"}, status_code=400)
+    _, max_tokens = AGENTS[req.agent]
+
+    def events():
+        for ev in stream_generate(req.prompt, max_tokens=max_tokens, start_model=req.start_model):
+            yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # Local development only: serve the frontend from public/ (Vercel serves it itself).

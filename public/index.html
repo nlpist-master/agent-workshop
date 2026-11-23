@@ -61,19 +61,22 @@ pre{margin:0;background:var(--code);border:1px solid var(--bd);border-radius:8px
 <script>
 /* ============ AGENT DEFINITIONS (prompts kept separate from logic) ============ */
 const JSON_RULE = "Respond with ONLY one valid JSON object. No markdown fences, no text outside the JSON.";
+/* Builder/Polisher write plain-text file blocks instead of JSON: no escaping errors, and every
+   finished file can be kept even when a response is cut off (see runFileAgent). */
+const FILE_FORMAT = "Output format: plain text, NOT JSON, no markdown code fences. First:\n=== SUMMARY ===\n<one short paragraph>\n=== END SUMMARY ===\nThen every file exactly like this:\n=== FILE: relative/path.ext ===\n<full file content>\n=== END FILE ===\nOptionally:\n=== NOTES ===\n- note\n=== END NOTES ===\nFinally, on its own line:\n=== DONE ===";
 const AGENTS = {
   planner: { name:"Planner", icon:"🧠", desc:"Turns an idea into a reviewable plan.",
     role:"Understands the idea, finds ambiguities, proposes architecture, user flows, file structure and steps. Never implements.",
     prompt:"You are the Planner agent in a software workflow. Write for a human reader, in the same language the user wrote their idea in (for example Hebrew). Produce a detailed, readable plan in Markdown: first line '# <project name>', then sections with '##' headings and bullet lists covering: Overview, Goals, Functional requirements, User flow, Data / state, Architecture, Proposed files, Implementation steps, Open questions, Assumptions. Be concrete and specific. No JSON, no code fences. Do NOT write the implementation. When the user later sends a message: if it changes the plan, begin your reply with the line [PLAN UPDATED] followed by the COMPLETE updated plan; if it is only a question, begin with [ANSWER] and answer briefly in plain text, without repeating the whole plan." },
   builder: { name:"Builder", icon:"💻", desc:"Implements the approved plan.",
     role:"Produces project files that follow the approved plan. Output is in-memory file objects only.",
-    prompt:"You are the Builder agent. Implement the approved plan as a small, working project, staying aligned with it. Pick languages appropriate to the idea (default: plain HTML/CSS/JS). Keep files compact. If given test findings, fix them and return the full updated file set. If you include a README.md, write ALL setup and run instructions for Windows (PowerShell or Command Prompt), for example `py -m venv .venv`, `.venv\\Scripts\\Activate.ps1`, `pip install -r requirements.txt`, `py app.py`, and Windows paths with backslashes; avoid Linux/macOS-only commands such as source, export, chmod, ls, rm, cp and python3. For a plain HTML project, say to open index.html by double-clicking it. " + JSON_RULE + ' Schema: {"summary":"","files":[{"path":"","content":""}],"notes":[]}' },
+    prompt:"You are the Builder agent. Implement the approved plan as a small, working project, staying aligned with it. Pick languages appropriate to the idea (default: plain HTML/CSS/JS). Keep files compact. If given test findings, fix them and write ONLY the files you change, each with its full content. If you include a README.md, write ALL setup and run instructions for Windows (PowerShell or Command Prompt), for example `py -m venv .venv`, `.venv\\Scripts\\Activate.ps1`, `pip install -r requirements.txt`, `py app.py`, and Windows paths with backslashes; avoid Linux/macOS-only commands such as source, export, chmod, ls, rm, cp and python3. For a plain HTML project, say to open index.html by double-clicking it. " + FILE_FORMAT },
   tester: { name:"Tester", icon:"🧪", desc:"AI code review of the generated files.",
     role:"Reviews requirements coverage, bugs, missing features, UX issues and plan/implementation mismatches. Does not rewrite the project and does not execute code.",
     prompt:"You are the Tester agent. You perform a static AI code review; you do NOT run code. Inspect requirements coverage, functional problems, missing features, obvious bugs, UX problems and inconsistencies with the plan. Do not rewrite the project. " + JSON_RULE + ' Schema: {"status":"pass|issues","summary":"","issues":[{"severity":"critical|warning|suggestion","title":"","description":"","recommendation":""}]}' },
   polisher: { name:"Polisher", icon:"✨", desc:"UI/UX and presentation improvements.",
     role:"Improves visual hierarchy, spacing, typography, consistency, responsiveness, empty/error states and usability without changing core functionality.",
-    prompt:"You are the Polisher agent. Focus on UI/UX and presentation: hierarchy, spacing, typography, consistency, responsiveness, empty and error states, button hierarchy, usability. Never change core functional requirements. Only include files you actually changed, with full content. If you change README.md, keep its instructions Windows-oriented (PowerShell / Command Prompt). " + JSON_RULE + ' Schema: {"summary":"","improvements":[""],"files":[{"path":"","content":""}]}' }
+    prompt:"You are the Polisher agent. Focus on UI/UX and presentation: hierarchy, spacing, typography, consistency, responsiveness, empty and error states, button hierarchy, usability. Never change core functional requirements. Only include files you actually changed, with full content. If you change README.md, keep its instructions Windows-oriented (PowerShell / Command Prompt). " + FILE_FORMAT.replace("=== NOTES ===","=== IMPROVEMENTS ===\n- improvement\n=== END IMPROVEMENTS ===\n=== NOTES ===") }
 };
 const STAGES = ["idea","plan","build","test","polish","completed"];
 
@@ -209,7 +212,7 @@ async function callAgent(key, task){
 }
 async function run(label, fn, onFail){
   if(ui.busy) return;
-  ui.busy=label; ui.error=null; render();
+  ui.busy=label; ui.error=null; ui.progress=null; render();
   try{ await fn(); }catch(e){ ui.error=(e&&e.message)||"Something went wrong. Please try again."; log("⚠", label+" failed"); if(onFail) onFail(); }
   ui.busy=null; render();
 }
@@ -254,16 +257,89 @@ function approve(){
   projectState.approvedVersion=pv.v; projectState.plan=pv.plan; log("✓","Plan v"+pv.v+" approved");
   build(null);
 }
+/* ============ LONG OUTPUTS: streaming + continuation (Builder, Polisher) ============
+   The server streams the model's text and cuts itself off before Vercel's time limit.
+   Every file block that was closed (=== END FILE ===) is kept. If the answer was cut off,
+   a continuation call gets the files already written and writes only the rest,
+   preferring the same model for consistent quality. */
+const MAX_ROUNDS = 5;
+const section = (t,name) => { const m=String(t).match(new RegExp("^=== "+name+" ===\\s*\\n([\\s\\S]*?)\\n=== END "+name+" ===","m")); return m?m[1].trim():""; };
+const bullets = s => s.split("\n").map(l=>l.replace(/^\s*[-*•]\s*/,"").trim()).filter(Boolean);
+function parseFileBlocks(t){
+  const out=[], re=/^=== FILE: (.+?) ===[ \t]*\r?\n([\s\S]*?)\r?\n=== END FILE ===[ \t]*$/gm; let m;
+  while((m=re.exec(String(t)))){
+    let c=m[2]; const f=c.match(/^```[\w.+-]*\r?\n([\s\S]*?)\r?\n```\s*$/); if(f) c=f[1];   // strip stray code fences
+    out.push({path:m[1].trim(),content:c+"\n"});
+  }
+  return out;
+}
+const openFile = t => { const all=[...String(t).matchAll(/^=== FILE: (.+?) ===/gm)]; const last=all.at(-1); return last && !String(t).slice(last.index).match(/^=== END FILE ===/m) ? last[1].trim() : null; };
+
+async function streamAgent(key, task, startModel, onText){
+  let res;
+  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null})}); }
+  catch(e){ return {text:"",end:"network",err:{message:"Could not reach the server. Check your connection and try again."}}; }
+  if(!res.ok||!res.body){ let d=null; try{ d=await res.json(); }catch(e){} return {text:"",end:"error",err:{message:(d&&d.message)||"Server error (HTTP "+res.status+")."}}; }
+  const reader=res.body.getReader(), dec=new TextDecoder(); let buf="", text="", model=null, end=null, err=null;
+  try{
+    for(;;){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf("\n"))>=0){
+        const line=buf.slice(0,i); buf=buf.slice(i+1); if(!line.trim()) continue;
+        let ev; try{ ev=JSON.parse(line); }catch(e){ continue; }
+        if(ev.type==="text"){ text+=ev.t; onText(text,model,false); }
+        else if(ev.type==="ping") onText(text,model,true);
+        else if(ev.type==="model"){ model=ev.model; onText(text,model,false); }
+        else if(ev.type==="note") logModelNotes([ev]);
+        else if(ev.type==="end") end=ev.reason;
+        else if(ev.type==="error") err=ev;
+      }
+    }
+  }catch(e){ end=end||"network"; }   // connection dropped: keep what arrived
+  return {text, model, end:end||(err?"error":"network"), err};
+}
+
+async function runFileAgent(key, baseTask, changedOnly){
+  const got={}, order=[]; let summary="", notes=[], improvements=[], model=null, lastDraw=0, stuck=0;
+  for(let round=1; round<=MAX_ROUNDS; round++){
+    const done=order.map(p=>got[p]);
+    let task=baseTask;
+    if(done.length) task+=`\n\nCONTINUATION: your previous response was cut off. These files are ALREADY WRITTEN, do not write them again:\n${filesText(done)}\n\nContinue in the same format: write ONLY the remaining ${changedOnly?"changed ":""}files, then === DONE ===. Skip the SUMMARY. If nothing remains, output only === DONE ===.`;
+    const r=await streamAgent(key, task, model, (text,m,thinking)=>{
+      if(Date.now()-lastDraw<700) return; lastDraw=Date.now();
+      const fresh=parseFileBlocks(text).map(f=>f.path).filter(p=>!got[p]);
+      ui.progress={model:m, round, done:[...order,...fresh], writing:openFile(text), thinking:thinking&&!text}; render();
+    });
+    if(r.model){ if(r.model!==model) log("🤖",AGENTS[key].name+" answering via "+shortModel(r.model)+(round>1?" (round "+round+")":"")); model=r.model; }
+    const before=order.length;
+    for(const f of parseFileBlocks(r.text)){ if(!got[f.path]) order.push(f.path); got[f.path]=f; }
+    summary=summary||section(r.text,"SUMMARY"); notes.push(...bullets(section(r.text,"NOTES"))); improvements.push(...bullets(section(r.text,"IMPROVEMENTS")));
+    if(r.err&&!r.text) throw new Error(r.err.message||"Gemini error.");
+    const finished=/^=== DONE ===\s*$/m.test(r.text) || (r.end==="stop" && !openFile(r.text));
+    if(finished) break;
+    if(order.length===before){
+      // One retry without progress is allowed: it starts directly at the model that answered
+      // (skipping models that hung), so it gets the whole time budget.
+      if(!r.model||stuck++) throw new Error(AGENTS[key].name+" was cut off ("+r.end+") before finishing a file"+(before?"; "+before+" files were kept":"")+". Try again.");
+    } else stuck=0;
+    if(round===MAX_ROUNDS){ log("⚠",AGENTS[key].name+": stopped after "+MAX_ROUNDS+" rounds; some files may be missing"); break; }
+    log("💾",AGENTS[key].name+": "+order.length+" files saved, response cut off ("+r.end+"), continuing…");
+  }
+  ui.progress=null;
+  return {files:cleanFiles(order.map(p=>got[p])), summary, notes, improvements};
+}
+
 function build(findings){
   if(projectState.approvedVersion==null) return;
   run("Builder", async()=>{
     log("💻","Builder started"+(findings?" (applying test findings)":""));
     let task=`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nPlanner conversation:\n${projectState.plannerConversation.map(m=>m.role+": "+m.content).join("\n")}`;
     if(findings) task+=`\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings to address:\n${JSON.stringify(findings)}`;
-    const r=await callAgent("builder",task);
-    const files=cleanFiles(r.json&&r.json.files);
-    if(!files.length) throw new Error("Builder returned no usable files"+(r.truncated?" (response was cut off)":"")+". Nothing was changed; try again.");
-    setFiles(files,"Builder",true); projectState.buildResult={summary:r.json.summary||"",notes:arr(r.json.notes)};
+    const r=await runFileAgent("builder",task,!!findings);
+    const files=r.files;
+    if(!files.length) throw new Error("Builder returned no usable files. Nothing was changed; try again.");
+    setFiles(files,"Builder",!findings); projectState.buildResult={summary:r.summary,notes:r.notes};
     ui.sel=files.some(f=>f.path===ui.sel)?ui.sel:files[0].path; ui.showPrev=false;
     if(findings && projectState.testResults) projectState.testResults.stale=true;
     projectState.status="build"; log("💻","Builder created "+files.length+" files (in memory only)");
@@ -288,9 +364,8 @@ function runPolish(){
   run("Polisher", async()=>{
     log("✨","Polisher started");
     const t=projectState.testResults;
-    const r=await callAgent("polisher",`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings:\n${t?JSON.stringify(t.issues):"none"}`);
-    const j=r.json||{};
-    projectState.polishResults={summary:j.summary||(r.json?"":r.text.slice(0,1500)),improvements:arr(j.improvements),files:cleanFiles(j.files),applied:false};
+    const r=await runFileAgent("polisher",`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings:\n${t?JSON.stringify(t.issues):"none"}`, true);
+    projectState.polishResults={summary:r.summary,improvements:r.improvements,files:r.files,applied:false};
     projectState.status="polish"; log("✨","Polisher proposed "+projectState.polishResults.files.length+" file changes");
   });
 }
@@ -335,7 +410,12 @@ function renderPlan(p){
   if(p.text||p._raw) return md(p.text||p._raw);
   return `<h2>${esc(p.projectName||"Project")}</h2><p>${esc(p.summary)}</p>`+sect("Goals",p.goals)+sect("Functional requirements",p.requirements)+sect("User flow",p.userFlow)+sect("Data / state",p.dataAndState)+sect("Architecture",p.architecture)+sect("Proposed files",p.files)+sect("Implementation steps",p.implementationSteps)+sect("Open questions",p.openQuestions)+sect("Assumptions",p.assumptions);
 }
-const busyBox=()=>ui.busy?`<div class="card"><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.</div>`:"";
+const busyBox=()=>{
+  if(!ui.busy) return "";
+  const p=ui.progress;
+  const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
+  return `<div class="card"><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.${detail}</div>`;
+};
 const ctxBtn=k=>`<button class="sm" onclick="showContext('${k}')">🔍 Context</button>`;
 function agentHead(k,extra){ const a=AGENTS[k]; return `<div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">${a.icon} ${a.name}</h2><div class="row">${extra||""}${ctxBtn(k)}</div></div><div class="sub" style="margin-bottom:8px">${esc(a.desc)}</div>`; }
 
