@@ -210,17 +210,16 @@ STREAM_DEADLINE = float(os.environ.get("STREAM_DEADLINE", "230"))  # env overrid
 READ_TIMEOUT = 90.0
 
 
-def stream_generate(prompt, max_tokens=65536, start_model=None, skip=None):
+def stream_generate(prompt, max_tokens=65536, start_model=None, skip=None, json_mode=False):
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         yield {"type": "error", "kind": "missing_key", "message": "GEMINI_API_KEY is not set on the server."}
         return
 
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.7,
-                             "thinkingConfig": {"includeThoughts": True}},
-    }
+    config = {"maxOutputTokens": max_tokens, "temperature": 0.7, "thinkingConfig": {"includeThoughts": True}}
+    if json_mode:
+        config["responseMimeType"] = "application/json"
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": config}
     models = _models(skip)
     if start_model in models:  # continue with the model that answered last time
         models = models[models.index(start_model):]

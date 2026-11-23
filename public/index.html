@@ -229,24 +229,23 @@ function saveCode(v){
   closeModal(); if(ui.error&&/access code/i.test(ui.error)){ ui.error=null; render(); }
 }
 const CODE_ERR = "An access code is needed. Enter it, then click the button again.";
+/* Short answers (Planner, Tester) also stream, for live progress ("thinking…", model, size), faster
+   detection of a hung model, and a Stop that also ends the server call. Same result shape as before.
+   A cut-off answer is an error: a half plan or half JSON must never be used. */
 async function callAgent(key, task){
-  let res, data=null;
-  try{
-    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task, skip:skipList() }), signal:abortCtl&&abortCtl.signal });
-  }catch(e){ throw new Error("Could not reach the server. Check your connection and try again."); }
-  try{ data = await res.json(); }catch(e){}
+  let lastDraw=0;
+  const r=await streamAgent(key, task, null, (text,m,thinking)=>{
+    if(Date.now()-lastDraw<700) return; lastDraw=Date.now();
+    ui.progress={model:m, round:1, done:[], writing:null, chars:text.length, thinking:thinking&&!text}; render();
+  });
   if(aborted()) throw new Error("Stopped.");
-  if(res.status===401){ askCode(data&&data.message); throw new Error(CODE_ERR); }
-  logModelNotes(data&&data.notes);
-  if(!res.ok || !data){
-    if(res.status===429) throw new Error(data&&data.error==="quota_daily" ? data.message : "Gemini rate limit reached. Wait about "+((data&&data.retry_after_seconds)||30)+" seconds and try again.");
-    if(res.status===504) throw new Error((data&&data.message) || "The request took too long and was stopped. Please try again.");
-    throw new Error((data&&data.message) || "Server error (HTTP "+res.status+"). Please try again.");
+  if(r.err&&!r.text){
+    const e=r.err;
+    throw new Error(e.kind==="rate_limited" ? "Gemini rate limit reached. Wait about "+(e.retry_after||30)+" seconds and try again." : (e.message||"Gemini error. Please try again."));
   }
-  const text = data.text || "";
-  clearModel(data.model);
-  if(data.model) log("🤖", AGENTS[key].name+" answered via "+shortModel(data.model));
-  return { text, truncated:!!data.truncated, json:parseJSON(text) };
+  if(r.end!=="stop") throw new Error("The "+AGENTS[key].name+"'s answer was cut off ("+r.end+"). Nothing was changed; please try again.");
+  if(r.model) log("🤖", AGENTS[key].name+" answered via "+shortModel(r.model));
+  return { text:r.text, truncated:false, json:parseJSON(r.text) };
 }
 /* Stop: aborts the running agent's request. Whatever it throws afterwards counts as "stopped by
    you", not as an error; partial Builder/Polisher files stay in the draft (Continue card). */
@@ -337,7 +336,7 @@ async function streamAgent(key, task, startModel, onText){
         let ev; try{ ev=JSON.parse(line); }catch(e){ continue; }
         if(ev.type==="text"){ text+=ev.t; onText(text,model,false); }
         else if(ev.type==="ping") onText(text,model,true);
-        else if(ev.type==="model"){ model=ev.model; clearModel(model); onText(text,model,false); }
+        else if(ev.type==="model"){ model=ev.model; clearModel(model); onText(text,model,!text); }   // no text yet = thinking
         else if(ev.type==="note") logModelNotes([ev]);
         else if(ev.type==="end") end=ev.reason;
         else if(ev.type==="error") err=ev;
@@ -478,7 +477,7 @@ function renderPlan(p){
 const busyBox=()=>{
   if(!ui.busy) return "";
   const p=ui.progress;
-  const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
+  const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":p.chars?"writing… "+(p.chars>=1000?(p.chars/1000).toFixed(1)+"k":p.chars)+" chars":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
   return `<div class="card"><div class="row" style="justify-content:space-between"><span><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.</span><button class="sm" onclick="stopAgent()">⏹ Stop</button></div>${detail}</div>`;
 };
 const draftBox=()=>{   // partial work from a run that stopped (error, cut-off or page reload)

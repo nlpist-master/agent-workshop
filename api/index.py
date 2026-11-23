@@ -26,12 +26,12 @@ from _gemini_client import GeminiError, generate, stream_generate
 
 app = FastAPI(title="Agent Workshop")
 
-# agent -> (JSON response mode, maxOutputTokens)
+# agent -> (JSON response mode, maxOutputTokens). Builder/Polisher write file blocks, not JSON.
 AGENTS = {
     "planner": (False, 16384),
-    "builder": (True, 65536),
+    "builder": (False, 65536),
     "tester": (True, 16384),
-    "polisher": (True, 65536),
+    "polisher": (False, 65536),
 }
 
 
@@ -89,15 +89,17 @@ class StreamRequest(BaseModel):
 
 @app.post("/api/agent/stream")
 def run_agent_stream(req: StreamRequest, x_access_code: str | None = Header(None)):
-    """Long outputs (Builder, Polisher): NDJSON event stream, cut off by the server in time."""
+    """All agents in the UI: NDJSON event stream, cut off by the server in time.
+    (/api/agent, the one-shot call, is no longer used by the UI; kept for rollback.)"""
     if (denied := _denied(x_access_code)):
         return denied
     if req.agent not in AGENTS:
         return JSONResponse({"error": "bad_request", "message": f"Unknown agent: {req.agent}"}, status_code=400)
-    _, max_tokens = AGENTS[req.agent]
+    json_mode, max_tokens = AGENTS[req.agent]
 
     def events():
-        for ev in stream_generate(req.prompt, max_tokens=max_tokens, start_model=req.start_model, skip=req.skip):
+        for ev in stream_generate(req.prompt, max_tokens=max_tokens, start_model=req.start_model, skip=req.skip,
+                                  json_mode=json_mode):
             yield json.dumps(ev, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson",
