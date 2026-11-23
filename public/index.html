@@ -254,14 +254,17 @@ const aborted = () => !!(abortCtl && abortCtl.signal.aborted);
 function stopAgent(){ if(abortCtl && !abortCtl.signal.aborted){ abortCtl.abort(); } }
 async function run(label, fn, onFail){
   if(ui.busy) return;
-  ui.busy=label; ui.error=null; ui.progress=null; abortCtl=new AbortController(); render();
+  ui.busy=label; ui.error=null; ui.progress=null; abortCtl=new AbortController(); ui.busyStart=Date.now(); render();
+  // Elapsed-time counter: updates only its own <span>, so typing and scroll positions are untouched.
+  const timer=setInterval(()=>{ const e=document.getElementById("busyTime"); if(e) e.textContent=elapsed(); }, 1000);
   try{ await fn(); }catch(e){
     if(aborted()) log("⏹", label+" stopped by you");
     else{ ui.error=(e&&e.message)||"Something went wrong. Please try again."; log("⚠", label+" failed"); }
     if(onFail) onFail();
   }
-  abortCtl=null; ui.busy=null; ui.progress=null; render();
+  clearInterval(timer); abortCtl=null; ui.busy=null; ui.progress=null; render();
 }
+const elapsed = () => { const s=Math.max(0,Math.floor((Date.now()-(ui.busyStart||Date.now()))/1000)); return s<60 ? s+"s" : Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s"; };
 const filesText = fs => fs.map(f=>`=== ${f.path} ===\n${f.content}`).join("\n\n");
 const cleanFiles = a => arr(a).filter(f=>f&&typeof f.path==="string"&&f.path&&typeof f.content==="string").map(f=>({path:f.path.trim().replace(/^(\.?\/)+/,""),content:f.content}));
 const curPlan = () => (projectState.planVersions.at(-1)||{}).plan || null;
@@ -478,7 +481,7 @@ const busyBox=()=>{
   if(!ui.busy) return "";
   const p=ui.progress;
   const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":p.chars?"writing… "+(p.chars>=1000?(p.chars/1000).toFixed(1)+"k":p.chars)+" chars":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
-  return `<div class="card"><div class="row" style="justify-content:space-between"><span><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.</span><button class="sm" onclick="stopAgent()">⏹ Stop</button></div>${detail}</div>`;
+  return `<div class="card"><div class="row" style="justify-content:space-between"><span><span class="spin"></span>${esc(ui.busy)} is working (<span id="busyTime">${elapsed()}</span>)… this can take a few minutes.</span><button class="sm" onclick="stopAgent()">⏹ Stop</button></div>${detail}</div>`;
 };
 const draftBox=()=>{   // partial work from a run that stopped (error, cut-off or page reload)
   const d=projectState.draft; if(ui.busy||!d||!d.files.length) return "";
@@ -542,10 +545,10 @@ function render(){
     ${p.files.length?`<h3>Proposed file changes</h3><ul>${p.files.map(f=>`<li><code>${esc(f.path)}</code></li>`).join("")}</ul>`:`<div class="note">The Polisher proposed recommendations only, no file changes.</div>`}
     ${p.files.length&&!p.applied?`<button class="pri" ${dis} onclick="applyPolish()">Apply Polish</button>`:""}${s.status==="polish"&&!p.files.length?`<button class="pri" ${dis} onclick="finish()">✓ Finish</button>`:""}</div>`;
   }
+  h+=draftBox()+busyBox();   // right after the stage cards (where the clicked button is), above Project Output
   if(s.files.length){
     h+=`<div class="card"><h2>Project Output</h2><p>${s.files.length} file${s.files.length>1?"s":""} generated${nch?` · ${nch} modified by ${esc(chSrc)}`:""}</p><div class="row" style="margin-bottom:8px"><button class="sm" onclick="document.getElementById('filesCard').scrollIntoView({behavior:'smooth'})">👁 View Files</button>${DL?`<button class="pri sm" onclick="dlZip()">⬇ Download ZIP</button>`:""}</div>${s.files.map((f,i)=>`<div class="row" style="justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--bd)"><code>${esc(f.path)}</code>${DL?`<button class="sm" onclick="dlFile(${i})">Download</button>`:""}</div>`).join("")}</div>`;
   }
-  h+=draftBox()+busyBox();
   $("#main").innerHTML=h;
   $("#log").innerHTML=s.activityLog.length?s.activityLog.map(e=>`<div><time>${e.t}</time>${e.icon} ${esc(e.msg)}</div>`).join(""):`<div class="sub">No activity yet.</div>`;
 }
