@@ -192,8 +192,24 @@ function parseJSON(t){
 
 /* ============ API LAYER (only place that talks to the backend / Gemini) ============ */
 const shortModel = m => String(m||"").replace(/^gemini-/,"").replace(/-preview$/,"").replace(/-/g," ").replace(/\b\w/g,c=>c.toUpperCase());
+/* Busy models are skipped for a while: serverless instances share no memory, so the browser
+   remembers which model was busy (10 min) or gone (24 h) and sends them as `skip`.
+   A model that answers is cleared at once. Daily quota is not handled here (see ROADMAP part B). */
+const SKIP_KEY = "agentWorkshop:modelSkip", SKIP_MS = {busy:10*60e3, timeout:10*60e3, network:10*60e3, model_gone:24*3600e3};
+const hhmm = t => new Date(t).toTimeString().slice(0,5);
+function readSkips(){ let s={}; try{ s=JSON.parse(localStorage.getItem(SKIP_KEY))||{}; }catch(e){} const now=Date.now(); for(const m in s) if(!(s[m]&&s[m].until>now)) delete s[m]; return s; }
+function writeSkips(s){ try{ localStorage.setItem(SKIP_KEY, JSON.stringify(s)); }catch(e){} }
+function markModel(n){ if(!SKIP_MS[n.reason]||!n.model) return; const s=readSkips(), now=Date.now(); s[n.model]={reason:n.reason, at:now, until:now+SKIP_MS[n.reason]}; writeSkips(s); }
+function clearModel(m){ const s=readSkips(); if(m&&s[m]){ delete s[m]; writeSkips(s); } }
+function skipList(){   // models to skip on this call; logged so the user sees why
+  const s=readSkips(), ms=Object.keys(s);
+  const why={busy:"busy",timeout:"no answer",network:"network error",model_gone:"not available"};
+  ms.forEach(m=>log("⏭","Skipping "+shortModel(m)+" ("+(why[s[m].reason]||s[m].reason)+" at "+hhmm(s[m].at)+") until "+hhmm(s[m].until)));
+  return ms;
+}
 function logModelNotes(notes){   // what happened before the answer: switches and waits
   const why={quota_daily:"daily quota used up",rate_minute:"per-minute limit",busy:"busy",timeout:"no answer in time",model_gone:"not available",network:"network error"};
+  arr(notes).forEach(markModel);
   arr(notes).forEach(n=>log(n.reason==="quota_daily"?"⛔":"⚠", n.reason==="rate_minute"&&n.wait ? shortModel(n.model)+": per-minute limit, waited "+n.wait+"s" : shortModel(n.model)+": "+(why[n.reason]||n.reason)+", switched to next model"));
 }
 /* Access code: the server may require a shared code (env APP_ACCESS_CODE) so strangers cannot use up
@@ -216,7 +232,7 @@ const CODE_ERR = "An access code is needed. Enter it, then click the button agai
 async function callAgent(key, task){
   let res, data=null;
   try{
-    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task }) });
+    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task, skip:skipList() }) });
   }catch(e){ throw new Error("Could not reach the server. Check your connection and try again."); }
   try{ data = await res.json(); }catch(e){}
   if(res.status===401){ askCode(data&&data.message); throw new Error(CODE_ERR); }
@@ -227,6 +243,7 @@ async function callAgent(key, task){
     throw new Error((data&&data.message) || "Server error (HTTP "+res.status+"). Please try again.");
   }
   const text = data.text || "";
+  clearModel(data.model);
   if(data.model) log("🤖", AGENTS[key].name+" answered via "+shortModel(data.model));
   return { text, truncated:!!data.truncated, json:parseJSON(text) };
 }
@@ -297,7 +314,7 @@ const openFile = t => { const all=[...String(t).matchAll(/^=== FILE: (.+?) ===/g
 
 async function streamAgent(key, task, startModel, onText){
   let res;
-  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:apiHeaders(),body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null})}); }
+  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:apiHeaders(),body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null,skip:skipList()})}); }
   catch(e){ return {text:"",end:"network",err:{message:"Could not reach the server. Check your connection and try again."}}; }
   if(!res.ok||!res.body){ let d=null; try{ d=await res.json(); }catch(e){} if(res.status===401){ askCode(d&&d.message); return {text:"",end:"error",err:{message:CODE_ERR}}; } return {text:"",end:"error",err:{message:(d&&d.message)||"Server error (HTTP "+res.status+")."}}; }
   const reader=res.body.getReader(), dec=new TextDecoder(); let buf="", text="", model=null, end=null, err=null;
@@ -310,7 +327,7 @@ async function streamAgent(key, task, startModel, onText){
         let ev; try{ ev=JSON.parse(line); }catch(e){ continue; }
         if(ev.type==="text"){ text+=ev.t; onText(text,model,false); }
         else if(ev.type==="ping") onText(text,model,true);
-        else if(ev.type==="model"){ model=ev.model; onText(text,model,false); }
+        else if(ev.type==="model"){ model=ev.model; clearModel(model); onText(text,model,false); }
         else if(ev.type==="note") logModelNotes([ev]);
         else if(ev.type==="end") end=ev.reason;
         else if(ev.type==="error") err=ev;

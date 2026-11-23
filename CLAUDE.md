@@ -38,6 +38,7 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 ### Model policy
 
 - Order: `gemini-3.8-flash` → `3.7` → `3.6` → `3.5` → `gemini-3-flash-preview` → `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`. Override with env `GEMINI_MODEL` (comma list).
+- Busy skip: the browser remembers models that were busy / timed out / network-failed (10 min) or 404 (24 h) in `localStorage` (`agentWorkshop:modelSkip`) and sends them as `skip` in both endpoints; a model that answers is cleared. The server drops them from the order, unless that would leave no model. Logged as `⏭ Skipping …`.
 - Daily quota (429 PerDay) → next model. Per-minute 429 → wait once (≤60s), retry same model. 404/5xx/timeout → next model. Other 4xx → stop.
 - Do NOT add `gemini-2.5-flash`: deprecated, routes to 3.5-flash-lite from 2026-12-01.
 - Free tier (AI Studio export 2026-11-11): Flash models ~5 RPM / 20 RPD each; Flash-Lite 15 RPM / 500 RPD. Quotas are per Google Cloud project. Pro models: 0 on free.
@@ -67,5 +68,6 @@ uvicorn api.index:app --reload
 ## Known facts / gotchas
 
 - Gemini 3.8 / 3.7 Flash are often overloaded (503), and sometimes take ~90s to answer 503. In practice many calls are answered by 3.6 Flash.
+- Local preview may serve a cached `index.html` after edits: reload with `/?nocache=<n>` and check a new function exists before testing.
 - Bash tool heredocs may mangle `\\n` in JS strings – prefer the Edit tool for JS string changes.
 - Line endings: git warns LF→CRLF; harmless.

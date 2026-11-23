@@ -43,14 +43,18 @@ class GeminiError(Exception):
         self.notes = notes or []
 
 
-def _models():
+def _models(skip=None):
+    """Model order. `skip`: models the browser saw busy/unavailable recently (it remembers them
+    for a few minutes, since serverless instances do not share memory). Ignored if it would leave
+    no model at all."""
     env = [m.strip() for m in os.environ.get("GEMINI_MODEL", "").split(",") if m.strip()]
     seen, out = set(), []
     for m in env or (FLASH_MODELS + LITE_MODELS):
         if m not in seen and m not in _gone:
             seen.add(m)
             out.append(m)
-    return out
+    kept = [m for m in out if m not in set(skip or [])]
+    return kept or out
 
 
 def _scrub(text, key):
@@ -93,7 +97,7 @@ def _extract(data):
     return text, c.get("finishReason") == "MAX_TOKENS"
 
 
-def generate(prompt, json_mode=False, max_tokens=8192):
+def generate(prompt, json_mode=False, max_tokens=8192, skip=None):
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         raise GeminiError("missing_key", "GEMINI_API_KEY is not set on the server.", status=500)
@@ -103,7 +107,7 @@ def generate(prompt, json_mode=False, max_tokens=8192):
         config["responseMimeType"] = "application/json"
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": config}
 
-    models = _models()
+    models = _models(skip)
     if not models:
         raise GeminiError("gemini_error", "No Gemini model is available (all returned 404).")
 
@@ -206,7 +210,7 @@ STREAM_DEADLINE = float(os.environ.get("STREAM_DEADLINE", "230"))  # env overrid
 READ_TIMEOUT = 90.0
 
 
-def stream_generate(prompt, max_tokens=65536, start_model=None):
+def stream_generate(prompt, max_tokens=65536, start_model=None, skip=None):
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         yield {"type": "error", "kind": "missing_key", "message": "GEMINI_API_KEY is not set on the server."}
@@ -217,7 +221,7 @@ def stream_generate(prompt, max_tokens=65536, start_model=None):
         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.7,
                              "thinkingConfig": {"includeThoughts": True}},
     }
-    models = _models()
+    models = _models(skip)
     if start_model in models:  # continue with the model that answered last time
         models = models[models.index(start_model):]
     if not models:

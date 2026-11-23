@@ -38,6 +38,7 @@ AGENTS = {
 class AgentRequest(BaseModel):
     agent: str
     prompt: str = Field(min_length=1, max_length=2_000_000)
+    skip: list[str] = Field(default_factory=list, max_length=20)  # models the browser saw busy recently
 
 
 def _access_code():
@@ -71,7 +72,7 @@ def run_agent(req: AgentRequest, x_access_code: str | None = Header(None)):
         return JSONResponse({"error": "bad_request", "message": f"Unknown agent: {req.agent}"}, status_code=400)
     json_mode, max_tokens = AGENTS[req.agent]
     try:
-        return generate(req.prompt, json_mode=json_mode, max_tokens=max_tokens)
+        return generate(req.prompt, json_mode=json_mode, max_tokens=max_tokens, skip=req.skip)
     except GeminiError as e:
         body = {"error": e.kind, "message": e.message, "notes": e.notes}
         if e.retry_after:
@@ -83,6 +84,7 @@ class StreamRequest(BaseModel):
     agent: str
     prompt: str = Field(min_length=1, max_length=2_000_000)
     start_model: str | None = None
+    skip: list[str] = Field(default_factory=list, max_length=20)
 
 
 @app.post("/api/agent/stream")
@@ -95,7 +97,7 @@ def run_agent_stream(req: StreamRequest, x_access_code: str | None = Header(None
     _, max_tokens = AGENTS[req.agent]
 
     def events():
-        for ev in stream_generate(req.prompt, max_tokens=max_tokens, start_model=req.start_model):
+        for ev in stream_generate(req.prompt, max_tokens=max_tokens, start_model=req.start_model, skip=req.skip):
             yield json.dumps(ev, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson",
