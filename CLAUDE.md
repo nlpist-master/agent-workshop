@@ -17,6 +17,12 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 - Output quality beats speed (it is a code-writing app): prefer the strongest Flash model; Flash-Lite only as a last resort or when the user picks "fast".
 - UX: light, not overloaded with details, but gives the user freedom of action.
 - Never enter API keys into services yourself (Vercel env vars etc.) – the user does it.
+- Responsive: every change must work on desktop AND mobile (narrow ~375px). Reuse existing CSS classes.
+- Every change follows this flow:
+  1. **Propose**: explain the idea, and show that it does not break logic (existing flows, saved projects in `localStorage`) or design (layout, desktop and mobile). Wait for approval.
+  2. **Implement** only after approval.
+  3. **Verify**: run the affected flow end-to-end (prefer mocks/no-key setups to save Gemini quota), and compare desktop + mobile screenshots before/after so the design did not change unintentionally.
+  4. Report, then stop for commit/push approval.
 
 ## Architecture
 
@@ -41,6 +47,8 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 - Agents write file blocks, not JSON: `=== SUMMARY ===`, `=== FILE: path ===` … `=== END FILE ===`, `=== NOTES ===` / `=== IMPROVEMENTS ===`, `=== DONE ===`.
 - Server cuts itself off at `STREAM_DEADLINE` (230s). A model that sends nothing for `READ_TIMEOUT` (90s) counts as hung.
 - Browser (`runFileAgent`) keeps every closed file block; if cut off, a continuation call sends the files already written and prefers the same model (`start_model`). Up to 5 rounds.
+- Partial work: finished files are also kept in `projectState.draft` (`{agent, findings, files, summary, notes, improvements, model}`), saved with the project while streaming. Project files change only on success, which clears the draft. After a failure or page reload a card offers `Continue` (resumes via continuation) or `Discard`.
+- Testing without quota: mock `window.fetch` for `/api/agent/stream` in the console (return a `ReadableStream` of NDJSON events) and use the `agent-workshop-code` launch config.
 
 ## Local development (Windows)
 

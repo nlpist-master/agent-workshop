@@ -82,7 +82,7 @@ const STAGES = ["idea","plan","build","test","polish","completed"];
 
 /* ============ STATE ============ */
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-const fresh = () => ({ id:uid(), name:"", created:Date.now(), updated:Date.now(), changes:{}, idea:"", plan:null, planVersions:[], approvedVersion:null, plannerConversation:[], files:[], buildResult:null, testResults:null, polishResults:null, activityLog:[], status:"idea" });
+const fresh = () => ({ id:uid(), name:"", created:Date.now(), updated:Date.now(), changes:{}, idea:"", plan:null, planVersions:[], approvedVersion:null, plannerConversation:[], files:[], buildResult:null, testResults:null, polishResults:null, activityLog:[], status:"idea", draft:null });
 let projectState = fresh();
 let ui = { busy:null, error:null, sel:null, draft:"", chat:"", showPrev:false, sev:{critical:true,warning:true,suggestion:false} };
 const DL = true;   // standard browser downloads (Blob + link)
@@ -124,6 +124,8 @@ function migrate(p){   // fill defaults so older/partial saves never crash
   if(!m.changes||typeof m.changes!=="object") m.changes={};
   if(m.testResults) m.testResults.issues=arr(m.testResults.issues);
   if(m.polishResults){ m.polishResults.files=cleanFiles(m.polishResults.files); m.polishResults.improvements=arr(m.polishResults.improvements); }
+  if(!m.draft||typeof m.draft!=="object"||!AGENTS[m.draft.agent]) m.draft=null;
+  else{ m.draft.files=cleanFiles(m.draft.files); m.draft.notes=arr(m.draft.notes); m.draft.improvements=arr(m.draft.improvements); }
   if(!STAGES.includes(m.status)||(!m.planVersions.length&&m.status!=="idea")) m.status="idea";
   return m;
 }
@@ -318,28 +320,36 @@ async function streamAgent(key, task, startModel, onText){
   return {text, model, end:end||(err?"error":"network"), err};
 }
 
+/* Partial work survives failures and page reloads: every finished file is also kept in
+   projectState.draft (saved with the project), and "Continue" resumes from it. The caller creates
+   the draft ({agent, findings}) and clears it on success; project files change only on success. */
 async function runFileAgent(key, baseTask, changedOnly){
-  const got={}, order=[]; let summary="", notes=[], improvements=[], model=null, lastDraw=0, stuck=0;
+  const d=projectState.draft, got={}, order=[];
+  for(const f of d.files){ if(!got[f.path]) order.push(f.path); got[f.path]=f; }   // resume from saved files
+  let summary=d.summary||"", notes=[...d.notes], improvements=[...d.improvements], model=d.model||null, lastDraw=0, stuck=0;
+  const keep=()=>Object.assign(d,{files:order.map(p=>got[p]), summary, notes, improvements, model, at:Date.now()});
+  const add=f=>{ if(!got[f.path]) order.push(f.path); got[f.path]=f; };
   for(let round=1; round<=MAX_ROUNDS; round++){
-    const done=order.map(p=>got[p]);
+    const done=order.map(p=>got[p]), before=order.length;
     let task=baseTask;
     if(done.length) task+=`\n\nCONTINUATION: your previous response was cut off. These files are ALREADY WRITTEN, do not write them again:\n${filesText(done)}\n\nContinue in the same format: write ONLY the remaining ${changedOnly?"changed ":""}files, then === DONE ===. Skip the SUMMARY. If nothing remains, output only === DONE ===.`;
     const r=await streamAgent(key, task, model, (text,m,thinking)=>{
       if(Date.now()-lastDraw<700) return; lastDraw=Date.now();
-      const fresh=parseFileBlocks(text).map(f=>f.path).filter(p=>!got[p]);
-      ui.progress={model:m, round, done:[...order,...fresh], writing:openFile(text), thinking:thinking&&!text}; render();
+      const blocks=parseFileBlocks(text);
+      if(blocks.some(f=>!got[f.path]||got[f.path].content!==f.content)){ blocks.forEach(add); if(m) model=m; keep(); }   // saved by the render below
+      ui.progress={model:m, round, done:[...order], writing:openFile(text), thinking:thinking&&!text}; render();
     });
-    if(r.model){ if(r.model!==model) log("🤖",AGENTS[key].name+" answering via "+shortModel(r.model)+(round>1?" (round "+round+")":"")); model=r.model; }
-    const before=order.length;
-    for(const f of parseFileBlocks(r.text)){ if(!got[f.path]) order.push(f.path); got[f.path]=f; }
+    if(r.model){ if(r.model!==model||round===1) log("🤖",AGENTS[key].name+" answering via "+shortModel(r.model)+(round>1?" (round "+round+")":"")); model=r.model; }
+    parseFileBlocks(r.text).forEach(add);
     summary=summary||section(r.text,"SUMMARY"); notes.push(...bullets(section(r.text,"NOTES"))); improvements.push(...bullets(section(r.text,"IMPROVEMENTS")));
-    if(r.err&&!r.text) throw new Error(r.err.message||"Gemini error.");
+    keep(); save();
+    if(r.err&&!r.text) throw new Error((r.err.message||"Gemini error.")+(order.length?" "+order.length+" finished files were kept; you can continue.":""));
     const finished=/^=== DONE ===\s*$/m.test(r.text) || (r.end==="stop" && !openFile(r.text));
     if(finished) break;
     if(order.length===before){
       // One retry without progress is allowed: it starts directly at the model that answered
       // (skipping models that hung), so it gets the whole time budget.
-      if(!r.model||stuck++) throw new Error(AGENTS[key].name+" was cut off ("+r.end+") before finishing a file"+(before?"; "+before+" files were kept":"")+". Try again.");
+      if(!r.model||stuck++) throw new Error(AGENTS[key].name+" was cut off ("+r.end+") before finishing a file"+(order.length?"; "+order.length+" finished files were kept, you can continue":"")+".");
     } else stuck=0;
     if(round===MAX_ROUNDS){ log("⚠",AGENTS[key].name+": stopped after "+MAX_ROUNDS+" rounds; some files may be missing"); break; }
     log("💾",AGENTS[key].name+": "+order.length+" files saved, response cut off ("+r.end+"), continuing…");
@@ -348,20 +358,23 @@ async function runFileAgent(key, baseTask, changedOnly){
   return {files:cleanFiles(order.map(p=>got[p])), summary, notes, improvements};
 }
 
-function build(findings){
+const newDraft = (agent, findings) => { projectState.draft={agent, findings:findings||null, files:[], summary:"", notes:[], improvements:[], model:null}; };
+const dropEmptyDraft = () => { if(projectState.draft&&!projectState.draft.files.length) projectState.draft=null; };
+function build(findings, resume){
   if(projectState.approvedVersion==null) return;
   run("Builder", async()=>{
-    log("💻","Builder started"+(findings?" (applying test findings)":""));
+    if(resume){ findings=projectState.draft.findings; log("💻","Builder continuing from "+projectState.draft.files.length+" saved files"); }
+    else{ newDraft("builder", findings); log("💻","Builder started"+(findings?" (applying test findings)":"")); }
     let task=`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nPlanner conversation:\n${projectState.plannerConversation.map(m=>m.role+": "+m.content).join("\n")}`;
     if(findings) task+=`\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings to address:\n${JSON.stringify(findings)}`;
     const r=await runFileAgent("builder",task,!!findings);
     const files=r.files;
     if(!files.length) throw new Error("Builder returned no usable files. Nothing was changed; try again.");
-    setFiles(files,"Builder",!findings); projectState.buildResult={summary:r.summary,notes:r.notes};
+    setFiles(files,"Builder",!findings); projectState.buildResult={summary:r.summary,notes:r.notes}; projectState.draft=null;
     ui.sel=files.some(f=>f.path===ui.sel)?ui.sel:files[0].path; ui.showPrev=false;
     if(findings && projectState.testResults) projectState.testResults.stale=true;
     projectState.status="build"; log("💻","Builder created "+files.length+" files (in memory only)");
-  });
+  }, dropEmptyDraft);
 }
 function testProject(){
   if(!projectState.files.length) return;
@@ -378,14 +391,20 @@ function sendBack(){
   const f=t.issues.filter(i=>ui.sev[String(i.severity).toLowerCase()]); if(!f.length) return;
   log("👤","User sent "+f.length+" findings back to Builder"); build(f);
 }
-function runPolish(){
+function runPolish(resume){
   run("Polisher", async()=>{
-    log("✨","Polisher started");
+    if(resume) log("✨","Polisher continuing from "+projectState.draft.files.length+" saved files");
+    else{ newDraft("polisher"); log("✨","Polisher started"); }
     const t=projectState.testResults;
     const r=await runFileAgent("polisher",`Original idea:\n${projectState.idea}\n\nApproved plan:\n${planStr(projectState.plan)}\n\nCurrent files:\n${filesText(projectState.files)}\n\nTest findings:\n${t?JSON.stringify(t.issues):"none"}`, true);
-    projectState.polishResults={summary:r.summary,improvements:r.improvements,files:r.files,applied:false};
+    projectState.polishResults={summary:r.summary,improvements:r.improvements,files:r.files,applied:false}; projectState.draft=null;
     projectState.status="polish"; log("✨","Polisher proposed "+projectState.polishResults.files.length+" file changes");
-  });
+  }, dropEmptyDraft);
+}
+function continueDraft(){ const d=projectState.draft; if(!d||ui.busy) return; d.agent==="polisher" ? runPolish(true) : build(d.findings,true); }
+function discardDraft(){
+  const d=projectState.draft; if(!d||ui.busy) return;
+  modal("Discard saved files?",`<p>${d.files.length} file(s) written by the ${esc(AGENTS[d.agent].name)} before it stopped will be deleted. Your project files are not affected.</p>`,"Discard",()=>{ projectState.draft=null; log("🗑",AGENTS[d.agent].name+": saved partial files discarded"); render(); });
 }
 function applyPolish(){
   const p=projectState.polishResults; if(!p||!p.files.length) return;
@@ -433,6 +452,13 @@ const busyBox=()=>{
   const p=ui.progress;
   const detail=p?`<div class="sub" style="margin-top:6px">${p.model?"Model: "+esc(shortModel(p.model))+" · ":""}${p.round>1?"Round "+p.round+" · ":""}${p.thinking?"thinking…":p.writing?"writing <code>"+esc(p.writing)+"</code>":""}</div>${p.done.length?`<div class="sub">✓ ${p.done.map(esc).join(", ")}</div>`:""}`:"";
   return `<div class="card"><span class="spin"></span>${esc(ui.busy)} is working… this can take a few minutes.${detail}</div>`;
+};
+const draftBox=()=>{   // partial work from a run that stopped (error, cut-off or page reload)
+  const d=projectState.draft; if(ui.busy||!d||!d.files.length) return "";
+  const a=AGENTS[d.agent];
+  return `<div class="card"><h2>⚠ ${esc(a.name)} stopped before finishing</h2><p class="sub">${d.files.length} finished file${d.files.length>1?"s were":" was"} saved: ${d.files.map(f=>`<code>${esc(f.path)}</code>`).join(", ")}</p>
+  <div class="row"><button class="pri" onclick="continueDraft()">↻ Continue ${esc(a.name)}</button><button onclick="discardDraft()">Discard</button></div>
+  <div class="note">Continue writes only the remaining files, with the same model when possible.</div></div>`;
 };
 const ctxBtn=k=>`<button class="sm" onclick="showContext('${k}')">🔍 Context</button>`;
 function agentHead(k,extra){ const a=AGENTS[k]; return `<div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">${a.icon} ${a.name}</h2><div class="row">${extra||""}${ctxBtn(k)}</div></div><div class="sub" style="margin-bottom:8px">${esc(a.desc)}</div>`; }
@@ -492,7 +518,7 @@ function render(){
   if(s.files.length){
     h+=`<div class="card"><h2>Project Output</h2><p>${s.files.length} file${s.files.length>1?"s":""} generated${nch?` · ${nch} modified by ${esc(chSrc)}`:""}</p><div class="row" style="margin-bottom:8px"><button class="sm" onclick="document.getElementById('filesCard').scrollIntoView({behavior:'smooth'})">👁 View Files</button>${DL?`<button class="pri sm" onclick="dlZip()">⬇ Download ZIP</button>`:""}</div>${s.files.map((f,i)=>`<div class="row" style="justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--bd)"><code>${esc(f.path)}</code>${DL?`<button class="sm" onclick="dlFile(${i})">Download</button>`:""}</div>`).join("")}</div>`;
   }
-  h+=busyBox();
+  h+=draftBox()+busyBox();
   $("#main").innerHTML=h;
   $("#log").innerHTML=s.activityLog.length?s.activityLog.map(e=>`<div><time>${e.t}</time>${e.icon} ${esc(e.msg)}</div>`).join(""):`<div class="sub">No activity yet.</div>`;
 }
