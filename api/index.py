@@ -14,9 +14,11 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI
+import hmac
 import json
+from urllib.parse import unquote
 
+from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -38,13 +40,33 @@ class AgentRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=2_000_000)
 
 
+def _access_code():
+    """Shared access code (env APP_ACCESS_CODE). Not set = open access (local development)."""
+    return os.environ.get("APP_ACCESS_CODE", "").strip()
+
+
+def _denied(sent):
+    """401 response if an access code is required and the one sent does not match, else None.
+    The browser sends the code URL-encoded, so non-ASCII codes (e.g. Hebrew) work in a header."""
+    code = _access_code()
+    if not code:
+        return None
+    given = unquote(sent or "").strip()
+    if given and hmac.compare_digest(given.encode(), code.encode()):
+        return None
+    return JSONResponse({"error": "access_code", "message": "Access code required." if not given else "Wrong access code."},
+                        status_code=401)
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "key_set": bool(os.environ.get("GEMINI_API_KEY"))}
+    return {"ok": True, "key_set": bool(os.environ.get("GEMINI_API_KEY")), "access_required": bool(_access_code())}
 
 
 @app.post("/api/agent")
-def run_agent(req: AgentRequest):
+def run_agent(req: AgentRequest, x_access_code: str | None = Header(None)):
+    if (denied := _denied(x_access_code)):
+        return denied
     if req.agent not in AGENTS:
         return JSONResponse({"error": "bad_request", "message": f"Unknown agent: {req.agent}"}, status_code=400)
     json_mode, max_tokens = AGENTS[req.agent]
@@ -64,8 +86,10 @@ class StreamRequest(BaseModel):
 
 
 @app.post("/api/agent/stream")
-def run_agent_stream(req: StreamRequest):
+def run_agent_stream(req: StreamRequest, x_access_code: str | None = Header(None)):
     """Long outputs (Builder, Polisher): NDJSON event stream, cut off by the server in time."""
+    if (denied := _denied(x_access_code)):
+        return denied
     if req.agent not in AGENTS:
         return JSONResponse({"error": "bad_request", "message": f"Unknown agent: {req.agent}"}, status_code=400)
     _, max_tokens = AGENTS[req.agent]

@@ -194,12 +194,30 @@ function logModelNotes(notes){   // what happened before the answer: switches an
   const why={quota_daily:"daily quota used up",rate_minute:"per-minute limit",busy:"busy",timeout:"no answer in time",model_gone:"not available",network:"network error"};
   arr(notes).forEach(n=>log(n.reason==="quota_daily"?"⛔":"⚠", n.reason==="rate_minute"&&n.wait ? shortModel(n.model)+": per-minute limit, waited "+n.wait+"s" : shortModel(n.model)+": "+(why[n.reason]||n.reason)+", switched to next model"));
 }
+/* Access code: the server may require a shared code (env APP_ACCESS_CODE) so strangers cannot use up
+   the shared Gemini quota. It is asked for once and kept in this browser. */
+const CODE_KEY = "agentWorkshop:accessCode";
+const getCode = () => { try{ return localStorage.getItem(CODE_KEY)||""; }catch(e){ return ""; } };
+const apiHeaders = () => { const h={"Content-Type":"application/json"}, c=getCode(); if(c) h["X-Access-Code"]=encodeURIComponent(c); return h; };
+function askCode(msg){
+  $("#modal").innerHTML=`<div class="modal"><div style="max-width:420px"><h2>🔑 Access code</h2><p class="sub">${esc(msg||"This workshop is private. Enter the access code you received.")}</p>
+  <form onsubmit="event.preventDefault();saveCode(this.code.value)"><input name="code" type="password" autocomplete="current-password" dir="auto" style="width:100%;font:inherit;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg)">
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="pri" type="submit">Save</button><button type="button" onclick="closeModal()">Cancel</button></div></form></div></div>`;
+  setTimeout(()=>{ const i=$("#modal input"); if(i) i.focus(); }, 0);
+}
+function saveCode(v){
+  v=String(v||"").trim(); if(!v) return;
+  try{ localStorage.setItem(CODE_KEY,v); }catch(e){}
+  closeModal(); if(ui.error&&/access code/i.test(ui.error)){ ui.error=null; render(); }
+}
+const CODE_ERR = "An access code is needed. Enter it, then click the button again.";
 async function callAgent(key, task){
   let res, data=null;
   try{
-    res = await fetch("/api/agent", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task }) });
+    res = await fetch("/api/agent", { method:"POST", headers:apiHeaders(), body:JSON.stringify({ agent:key, prompt:AGENTS[key].prompt + "\n\n" + task }) });
   }catch(e){ throw new Error("Could not reach the server. Check your connection and try again."); }
   try{ data = await res.json(); }catch(e){}
+  if(res.status===401){ askCode(data&&data.message); throw new Error(CODE_ERR); }
   logModelNotes(data&&data.notes);
   if(!res.ok || !data){
     if(res.status===429) throw new Error(data&&data.error==="quota_daily" ? data.message : "Gemini rate limit reached. Wait about "+((data&&data.retry_after_seconds)||30)+" seconds and try again.");
@@ -277,9 +295,9 @@ const openFile = t => { const all=[...String(t).matchAll(/^=== FILE: (.+?) ===/g
 
 async function streamAgent(key, task, startModel, onText){
   let res;
-  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null})}); }
+  try{ res=await fetch("/api/agent/stream",{method:"POST",headers:apiHeaders(),body:JSON.stringify({agent:key,prompt:AGENTS[key].prompt+"\n\n"+task,start_model:startModel||null})}); }
   catch(e){ return {text:"",end:"network",err:{message:"Could not reach the server. Check your connection and try again."}}; }
-  if(!res.ok||!res.body){ let d=null; try{ d=await res.json(); }catch(e){} return {text:"",end:"error",err:{message:(d&&d.message)||"Server error (HTTP "+res.status+")."}}; }
+  if(!res.ok||!res.body){ let d=null; try{ d=await res.json(); }catch(e){} if(res.status===401){ askCode(d&&d.message); return {text:"",end:"error",err:{message:CODE_ERR}}; } return {text:"",end:"error",err:{message:(d&&d.message)||"Server error (HTTP "+res.status+")."}}; }
   const reader=res.body.getReader(), dec=new TextDecoder(); let buf="", text="", model=null, end=null, err=null;
   try{
     for(;;){
@@ -481,6 +499,8 @@ function render(){
 function selFile(p){ ui.sel=p; ui.showPrev=false; render(); }
 function useExample(){ ui.draft="Build an NLP practice simulator for students. The application should present simulated client profiles, allow the student to conduct a text conversation, track the session, and provide feedback about the student's questioning techniques at the end."; render(); }
 loadCurrent(); render();
+// Ask for the access code up front if the server needs one and this browser has none yet.
+fetch("/api/health").then(r=>r.json()).then(h=>{ if(h&&h.access_required&&!getCode()) askCode(); }).catch(()=>{});
 </script>
 </body>
 </html>

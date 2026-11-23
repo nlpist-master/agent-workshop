@@ -24,7 +24,8 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 - `api/index.py` – FastAPI:
   - `POST /api/agent` – one-shot call (Planner, Tester). `{agent, prompt}` → `{text, model, truncated, notes}`.
   - `POST /api/agent/stream` – NDJSON stream (Builder, Polisher). Events: `note`, `model`, `ping`, `text`, `end`, `error`.
-  - `GET /api/health`.
+  - `GET /api/health` → `{ok, key_set, access_required}`.
+  - Access code: if env `APP_ACCESS_CODE` is set, both agent endpoints need header `X-Access-Code` (URL-encoded, so Hebrew works), else 401 `{"error":"access_code"}`. The browser asks once and keeps it in `localStorage` (`agentWorkshop:accessCode`). Unset = open (local dev). `.claude/launch.json` has `agent-workshop-code` (port 8020, code set, no Gemini key) to test it without using quota.
 - `api/_gemini_client.py` – all Gemini access (REST via `httpx`). Key only from env `GEMINI_API_KEY`.
 - `vercel.json` – `maxDuration: 300` (Hobby max), rewrite `/api/(.*)` → `/api/index`.
 

@@ -44,6 +44,7 @@ uvicorn api.index:app --reload
 
 1. מייבאים את הריפו ב-Vercel (Add New → Project).
 2. מוסיפים משתנה סביבה `GEMINI_API_KEY`.
+   - מומלץ להוסיף גם `APP_ACCESS_CODE` (קוד גישה משותף). הדפדפן מבקש אותו פעם אחת, וכך זרים לא מנצלים את המכסה היומית.
 3. `vercel.json` מגדיר `maxDuration: 300` (המקסימום בתוכנית Hobby).
 
 ### פלט ארוך: streaming והמשכיות (Builder, Polisher)
