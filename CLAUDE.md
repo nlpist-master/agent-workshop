@@ -27,6 +27,7 @@ Originally a Claude Artifact; now a standalone app on Gemini, deployed on Vercel
 ## Architecture
 
 - `public/index.html` – the whole UI (vanilla HTML/CSS/JS, no build). Projects live in `localStorage` (`agentWorkshop:v1`). ZIP is built client-side.
+  - Storage (Library modal): usage bar against a ~5 MB safe estimate (`QUOTA_CH`; Safari/Firefox ≈ 5 MB, Chrome more – the desktop app's preview allows far more, so a real quota error must be simulated by stubbing `Storage.prototype.setItem`), size per project, export (`{app, version, project}` JSON) / import (never overwrites: new id on clash), delete with confirm, and "Free up space" (`trimmed()`: drops `changes.before`, file contents of an applied polish, activity log beyond 100). `save()` warns from 85% and on `QuotaExceededError`.
 - `api/index.py` – FastAPI:
   - `POST /api/agent/stream` – NDJSON stream, used by ALL agents. `{agent, prompt, start_model?, skip?}`. Events: `note`, `model`, `ping`, `text`, `end`, `error`. JSON mode (`responseMimeType`) only for the Tester (see `AGENTS` in `api/index.py`).
   - `POST /api/agent` – old one-shot call. `{agent, prompt}` → `{text, model, truncated, notes}`. No longer used by the UI; kept for rollback.

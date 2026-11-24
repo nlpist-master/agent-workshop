@@ -114,7 +114,7 @@ let lastSig = "";
 const sigOf = () => JSON.stringify({...projectState, updated:0});
 const nameOf = p => { const pl=((p.planVersions||[]).at(-1)||{}).plan; const h=pl&&pl.text&&(pl.text.match(/^#\s+(.+)$/m)||[])[1]; return (pl&&pl.projectName)||(h&&h.replace(/[*`]/g,"").trim().slice(0,60))||(p.idea||"").slice(0,40); };
 function readStore(){ try{ const x=JSON.parse(localStorage.getItem(KEY)); if(x&&typeof x==="object"&&x.projects&&typeof x.projects==="object") return x; }catch(e){} return {current:null,projects:{}}; }
-function writeStore(x){ localStorage.setItem(KEY, JSON.stringify(x)); }
+function writeStore(x){ const s=JSON.stringify(x); localStorage.setItem(KEY, s); return s.length; }
 function writeCurrent(id){ try{ const x=readStore(); x.current=id; writeStore(x); }catch(e){} }
 function setSaved(t){ const e=$("#saved"); if(e) e.textContent=t; }
 function save(){
@@ -122,9 +122,10 @@ function save(){
   const sig=sigOf(); if(sig===lastSig) return;
   try{
     projectState.updated=Date.now(); projectState.name=nameOf(projectState);
-    const x=readStore(); x.current=projectState.id; x.projects[projectState.id]=projectState; writeStore(x);
-    lastSig=sigOf(); setSaved("✓ Saved "+new Date().toTimeString().slice(0,5));
-  }catch(e){ setSaved("⚠ Not saved (browser storage unavailable)"); }
+    const x=readStore(); x.current=projectState.id; x.projects[projectState.id]=projectState; const len=writeStore(x);
+    const pct=Math.round(len/QUOTA_CH*100);
+    lastSig=sigOf(); setSaved(pct>=100 ? "⚠ Storage above ~5 MB – open Library to free space" : pct>=85 ? "⚠ Storage "+pct+"% full – open Library to free space" : "✓ Saved "+new Date().toTimeString().slice(0,5));
+  }catch(e){ setSaved(e&&(e.name==="QuotaExceededError"||e.code===22) ? "⚠ Not saved: browser storage is full – open Library to free space" : "⚠ Not saved (browser storage unavailable)"); }
 }
 function migrate(p){   // fill defaults so older/partial saves never crash
   const m={...fresh(),...p};
@@ -147,9 +148,69 @@ function openProject(id){
   projectState=migrate(p); writeCurrent(id); resetUi(); lastSig=sigOf(); closeModal(); render();
 }
 const rel = t => { const m=Math.round((Date.now()-t)/60000); return m<1?"just now":m<60?m+" min ago":m<1440?Math.round(m/60)+" h ago":new Date(t).toLocaleDateString(); };
+/* ============ STORAGE: usage, export / import, delete, free up space ============
+   Browsers do not expose the real limit (Safari/Firefox about 5 MB, Chrome more), so 5 MB is the
+   safe estimate, and usage is the length of the stored text (1 character ≈ 1 byte here). */
+const QUOTA_CH = 5*1024*1024;
+const fmtSize = n => n<1024 ? n+" B" : n<1048576 ? Math.round(n/1024)+" KB" : (n/1048576).toFixed(1)+" MB";
+const projSize = p => JSON.stringify(p).length;
+const slugOf = p => (nameOf(p).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"project");
+function storageUsed(){ let n=0; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); n+=k.length+(localStorage.getItem(k)||"").length; } }catch(e){} return n; }
+function storageBar(){
+  const u=storageUsed(), raw=Math.round(u/QUOTA_CH*100), pct=Math.min(100,raw), c=pct>=90?"var(--crit)":pct>=70?"var(--warn)":"var(--ok)";
+  return `<div style="margin-bottom:6px"><div class="sub">Storage: ${fmtSize(u)} ${raw>100?"– above the ~5 MB that every browser allows":"of ~5 MB ("+pct+"%)"}</div><div style="height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin-top:4px"><div style="height:100%;width:${Math.max(pct,1)}%;background:${c}"></div></div></div>`;
+}
+// What "Free up space" removes: previous versions kept for Compare, file copies of an already
+// applied polish (the paths stay), and activity log entries beyond the last 100.
+function trimmed(p){
+  const q=JSON.parse(JSON.stringify(p));
+  for(const k in (q.changes||{})) if(q.changes[k]) delete q.changes[k].before;
+  if(q.polishResults&&q.polishResults.applied) q.polishResults.files=arr(q.polishResults.files).map(f=>({path:f.path,content:""}));
+  if(Array.isArray(q.activityLog)&&q.activityLog.length>100) q.activityLog=q.activityLog.slice(-100);
+  return q;
+}
 function showLibrary(){
-  save(); const ps=Object.values(readStore().projects).sort((a,b)=>b.updated-a.updated);
-  modal("📚 Project Library", ps.length ? ps.map(p=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--bd)"><div><b>${esc(p.name||"Untitled")}</b><div class="sub">Last updated: ${rel(p.updated)} · <span class="badge">${esc(String(p.status).toUpperCase())}</span></div></div>${p.id===projectState.id?`<span class="badge ok">Current</span>`:`<button class="sm pri" data-id="${esc(p.id)}" onclick="openProject(this.dataset.id)">Continue</button>`}</div>`).join("") : `<p class="sub">No saved projects yet. A project is saved automatically once you create a plan.</p>`);
+  save(); const x=readStore(), ps=Object.values(x.projects).sort((a,b)=>b.updated-a.updated);
+  const saving=ps.reduce((a,p)=>a+projSize(p)-projSize(trimmed(p)),0);
+  const rows=ps.map(p=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--bd)"><div><b>${esc(p.name||nameOf(p)||"Untitled")}</b><div class="sub">Last updated: ${rel(p.updated)} · <span class="badge">${esc(String(p.status).toUpperCase())}</span> · ${fmtSize(projSize(p))}</div></div>
+    <div class="row">${p.id===projectState.id?`<span class="badge ok">Current</span>`:`<button class="sm pri" data-id="${esc(p.id)}" onclick="openProject(this.dataset.id)">Continue</button>`}<button class="sm" title="Export (backup file)" data-id="${esc(p.id)}" onclick="exportProject(this.dataset.id)">⬇</button><button class="sm" title="Delete" data-id="${esc(p.id)}" onclick="deleteProject(this.dataset.id)">🗑</button></div></div>`).join("");
+  modal("📚 Project Library", storageBar() + (ps.length ? rows : `<p class="sub">No saved projects yet. A project is saved automatically once you create a plan.</p>`)
+    + `<div class="row" style="margin-top:12px"><button class="sm" onclick="importProject()">⬆ Import project</button>${saving>=1024?`<button class="sm" onclick="cleanupAll()">🧹 Free up space (~${fmtSize(saving)})</button>`:""}</div>
+    <input type="file" id="importFile" accept=".json,application/json" hidden onchange="importFile(this)">`);
+}
+function exportProject(id){
+  const p=readStore().projects[id]; if(!p) return;
+  saveOut(slugOf(p)+".agent-workshop.json", JSON.stringify({app:"agentWorkshop", version:1, exported:new Date().toISOString(), project:p}, null, 1));
+}
+function deleteProject(id){
+  if(guardBusy()) return;
+  const p=readStore().projects[id]; if(!p) return;
+  modal("Delete project?", `<p><b>${esc(p.name||nameOf(p)||"Untitled")}</b> (${fmtSize(projSize(p))}) will be deleted from this browser. This cannot be undone.</p><div class="note">Tip: export it first (⬇ in the Library) to keep a backup file.</div>`, "Delete", ()=>{
+    const x=readStore(); delete x.projects[id];
+    if(id===projectState.id){ projectState=fresh(); x.current=projectState.id; resetUi(); lastSig=sigOf(); }
+    try{ writeStore(x); }catch(e){}
+    render(); showLibrary();
+  });
+}
+function importProject(){ if(guardBusy()) return; const i=$("#importFile"); if(i) i.click(); }
+async function importFile(input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  let p=null; try{ const j=JSON.parse(await f.text()); p=j&&typeof j.project==="object"?j.project:j; }catch(e){}
+  let m=null; try{ if(p&&typeof p==="object"&&!Array.isArray(p)&&(p.idea||arr(p.planVersions).length)) m=migrate(p); }catch(e){}
+  if(!m){ closeModal(); ui.error="That file is not an Agent Workshop project."; return render(); }
+  const x=readStore(); if(typeof m.id!=="string"||!m.id||x.projects[m.id]) m.id=uid();   // never overwrite an existing project
+  m.name=m.name||nameOf(m); m.updated=Date.now(); x.projects[m.id]=m;
+  try{ writeStore(x); }catch(e){ closeModal(); ui.error="Not enough browser storage to import this project. Free up space in the Library first."; return render(); }
+  showLibrary();
+}
+function cleanupAll(){
+  if(guardBusy()) return; save();
+  modal("Free up space?", `<p>This keeps all projects and their files. It removes:</p><ul><li>Previous file versions kept for <b>Compare</b> (the Compare button disappears for those files)</li><li>File copies of a polish that was already applied (the list of changed files stays)</li><li>Activity log entries beyond the last 100 per project</li></ul>`, "Free up space", ()=>{
+    const x=readStore(); for(const id in x.projects) x.projects[id]=trimmed(x.projects[id]);
+    try{ writeStore(x); }catch(e){}
+    if(x.projects[projectState.id]){ projectState=migrate(x.projects[projectState.id]); ui.showPrev=false; lastSig=sigOf(); }
+    render(); showLibrary();
+  });
 }
 
 /* ============ FILES: single source of truth is projectState.files ============ */
@@ -184,7 +245,7 @@ function saveOut(name,data){
   }catch(e){ ui.error="Download failed."; render(); }
 }
 function dlFile(i){ const f=projectState.files[i]; if(!f) return; saveOut(f.path.split("/").pop(), f.content||"\n"); }
-function dlZip(){ if(!projectState.files.length) return; saveOut((nameOf(projectState).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"project")+".zip", makeZip(projectState.files)); }
+function dlZip(){ if(!projectState.files.length) return; saveOut(slugOf(projectState)+".zip", makeZip(projectState.files)); }
 
 /* ============ HELPERS ============ */
 const $ = s => document.querySelector(s);
