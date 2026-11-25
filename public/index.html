@@ -43,7 +43,7 @@ ul{margin:4px 0;padding-left:20px}li{margin:2px 0}
 .note{background:var(--acbg);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--mut);margin:8px 0}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--bd);border-top-color:var(--ac);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes s{to{transform:rotate(360deg)}}
 .files{display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px}@media(max-width:700px){.files{grid-template-columns:1fr}}
-.tree div{padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;font-family:ui-monospace,Menlo,monospace;word-break:break-all}.tree div.sel,.tree div:hover{background:var(--acbg)}
+.tree div{padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;font-family:ui-monospace,Menlo,monospace;word-break:break-all}.tree .badge{white-space:nowrap;display:inline-block}.tree div.sel,.tree div:hover{background:var(--acbg)}
 pre{margin:0;background:var(--code);border:1px solid var(--bd);border-radius:8px;padding:10px;overflow:auto;max-height:420px;font:12.5px/1.45 ui-monospace,Menlo,monospace;white-space:pre}
 .log{font-size:13px;max-height:70vh;overflow:auto}.log div{padding:3px 0;border-bottom:1px dashed var(--bd)}.log time{color:var(--mut);margin-right:6px}
 .issue{border-left:3px solid var(--bd);padding:4px 10px;margin:8px 0}.issue.critical{border-color:var(--crit)}.issue.warning{border-color:var(--warn)}.issue.suggestion{border-color:var(--ac)}
@@ -56,7 +56,7 @@ pre{margin:0;background:var(--code);border:1px solid var(--bd);border-radius:8px
 <body>
 <div class="wrap">
 <header>
-  <div><h1>Agent Workshop</h1><div class="sub">Build software through specialized AI agents</div><div style="margin-top:4px"><b id="cur"></b> <span class="sub" id="saved"></span></div></div>
+  <div><h1>Agent Workshop</h1><div class="sub">Build software through specialized AI agents</div><div style="margin-top:4px"><b id="cur"></b> <button class="sm" id="rename" title="Rename project" onclick="renameProject()" hidden>✏️</button> <span class="sub" id="saved"></span></div></div>
   <div class="row"><button onclick="showLibrary()">📚 Library</button><button onclick="newProject()">＋ New Project</button><button onclick="showConfig()">⚙ Agent Configuration</button></div>
 </header>
 <div id="steps" class="steps"></div>
@@ -112,7 +112,8 @@ function md(t){
 const KEY = "agentWorkshop:v1";
 let lastSig = "";
 const sigOf = () => JSON.stringify({...projectState, updated:0});
-const nameOf = p => { const pl=((p.planVersions||[]).at(-1)||{}).plan; const h=pl&&pl.text&&(pl.text.match(/^#\s+(.+)$/m)||[])[1]; return (pl&&pl.projectName)||(h&&h.replace(/[*`]/g,"").trim().slice(0,60))||(p.idea||"").slice(0,40); };
+// A manual name (customName) wins over the automatic one; older projects have none and keep today's behavior.
+const nameOf = p => { if(typeof p.customName==="string"&&p.customName.trim()) return p.customName.trim(); const pl=((p.planVersions||[]).at(-1)||{}).plan; const h=pl&&pl.text&&(pl.text.match(/^#\s+(.+)$/m)||[])[1]; return (pl&&pl.projectName)||(h&&h.replace(/[*`]/g,"").trim().slice(0,60))||(p.idea||"").slice(0,40); };
 function readStore(){ try{ const x=JSON.parse(localStorage.getItem(KEY)); if(x&&typeof x==="object"&&x.projects&&typeof x.projects==="object") return x; }catch(e){} return {current:null,projects:{}}; }
 function writeStore(x){ const s=JSON.stringify(x); localStorage.setItem(KEY, s); return s.length; }
 function writeCurrent(id){ try{ const x=readStore(); x.current=id; writeStore(x); }catch(e){} }
@@ -522,6 +523,18 @@ function modal(title,body,okLabel,okFn){
   if(okLabel) $("#mok").onclick=()=>{ closeModal(); okFn(); };
 }
 function closeModal(){ $("#modal").innerHTML=""; }
+function renameProject(){
+  if(!projectState.idea) return;
+  $("#modal").innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div style="max-width:420px"><h2>✏️ Project name</h2><p class="sub">Leave empty to use the name from the plan.</p>
+  <form onsubmit="event.preventDefault();setName(this.pname.value)"><input name="pname" maxlength="60" dir="auto" value="${esc(nameOf(projectState))}" style="width:100%;font:inherit;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg)">
+  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="pri" type="submit">Save</button><button type="button" onclick="closeModal()">Cancel</button></div></form></div></div>`;
+  setTimeout(()=>{ const i=$("#modal input"); if(i){ i.focus(); i.select(); } }, 0);
+}
+function setName(v){
+  v=String(v||"").trim().slice(0,60);
+  if(v) projectState.customName=v; else delete projectState.customName;
+  closeModal(); render();
+}
 function newProject(){   // current project stays saved in the library
   if(guardBusy()) return;
   if(!projectState.idea){ ui.error=null; return render(); }   // already empty: nothing to do
@@ -569,7 +582,7 @@ function render(){
   $("#steps").innerHTML=STAGES.map((n,k)=>{ const dn=k<i||s.status==="completed"; return `<span class="step ${dn?"done":""} ${!dn&&k===i?"cur":""}">${dn?"✓ ":""}${n.toUpperCase()}</span>`; }).join("");
   const dis=ui.busy?"disabled":"";
   const ch=s.changes||{}, nch=Object.keys(ch).length, chSrc=nch?Object.values(ch)[0].src:"";
-  $("#cur").textContent="Current Project: "+(nameOf(s)||"New project");
+  $("#cur").textContent="Current Project: "+(nameOf(s)||"New project"); $("#rename").hidden=!s.idea;
   let h="";
   if(ui.error) h+=`<div class="err">⚠ ${esc(ui.error)}</div>`;
 
@@ -579,6 +592,7 @@ function render(){
     <div class="note">Nothing starts automatically. You approve every stage.</div></div>`;
   } else {
     h+=`<div class="card">${agentHead("planner",s.planVersions.map(v=>`<span class="badge ${v.v===s.approvedVersion?"ok":""}">PLAN v${v.v}${v.v===s.approvedVersion?" ✓ APPROVED":""}</span>`).join(""))}
+    ${s.idea?`<details style="margin-bottom:6px"><summary>💡 Original idea</summary><div class="msg" dir="auto" style="white-space:pre-wrap">${esc(s.idea)}</div></details>`:""}
     <details ${s.status==="plan"?"open":""}><summary>Latest plan (v${s.planVersions.length})</summary>${renderPlan(curPlan())}</details>`;
     if(s.status==="plan"){
       h+=`<h3>Planner conversation</h3>${s.plannerConversation.map(m=>`<div class="msg ${m.role==="user"?"u":""}" dir="auto"><b>${m.role==="user"?"You":"🧠 Planner"}:</b> ${esc(m.content)}</div>`).join("")}
